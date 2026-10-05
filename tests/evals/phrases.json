@@ -1,0 +1,72 @@
+[
+  {
+    "input": "abasteci o i30 70 euros",
+    "fixture": [{ "kind": "vehicle", "name": "i30" }],
+    "expect": {
+      "tool": "record_event",
+      "type": "vehicle.fuel",
+      "amountMinor": 7000,
+      "entityNames": ["i30"],
+      "clarification": null
+    }
+  },
+  {
+    "input": "a Renata comprou uma air fryer por 129 e tem dois anos de garantia",
+    "fixture": [],
+    "expect": {
+      "tool": "record_event",
+      "type": ["purchase", "warranty"],
+      "amountMinor": 12900,
+      "entityNames": ["air fryer"],
+      "warrantyMonths": 24,
+      "clarification": null
+    }
+  },
+  {
+    "input": "guardei a chave reserva na gaveta",
+    "fixture": [],
+    "expect": {
+      "tool": "record_event",
+      "type": "object.location",
+      "amountMinor": null,
+      "entityNames": ["chave reserva"],
+      "clarification": null
+    }
+  },
+  {
+    "input": "gastei 80 conto no continente",
+    "fixture": [{ "kind": "merchant", "name": "Continente" }],
+    "expect": {
+      "tool": "record_event",
+      "type": "expense",
+      "amountMinor": 8000,
+      "entityNames": ["Continente"],
+      "clarification": null
+    }
+  },
+  {
+    "input": "o carro está com 18500 km",
+    "fixture": [
+      { "kind": "vehicle", "name": "i30" },
+      { "kind": "vehicle", "name": "Aveo" }
+    ],
+    "expect": {
+      "tool": "ask_clarification",
+      "type": null,
+      "amountMinor": null,
+      "entityNames": [],
+      "clarification": "Foi o i30 ou o Aveo?"
+    }
+  },
+  {
+    "input": "quanto gastamos no Continente este mês?",
+    "fixture": [{ "kind": "merchant", "name": "Continente" }],
+    "expect": {
+      "tool": "search_events",
+      "type": null,
+      "amountMinor": null,
+      "entityNames": ["Continente"],
+      "clarification": null
+    }
+  }
+]
