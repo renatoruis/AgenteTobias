@@ -4,6 +4,7 @@ import {
   fetchMe,
   fetchReminders,
   logout,
+  postConfirm,
   postMessage,
   settledMessages,
   voidEvent,
@@ -14,6 +15,7 @@ import { listMessages } from "./outbox"
 import type { OutboxMessage } from "./outbox"
 import type { Me, MessageResponse, Reminder } from "./types"
 import { House } from "./House"
+import { setSpeechEnabled, speakReply, speechEnabled, unlockSpeech } from "./speak"
 import { usePushToTalk } from "./usePushToTalk"
 import { Welcome } from "./Welcome"
 
@@ -85,6 +87,7 @@ function Home({ me, onSignedOut }: { me: Me; onSignedOut: () => void }) {
   onSignedOutRef.current = onSignedOut
 
   const talk = usePushToTalk(() => onSignedOutRef.current())
+  const [spoken, setSpoken] = useState(speechEnabled)
 
   const loadReminders = useCallback(async () => {
     const result = await fetchReminders()
@@ -118,7 +121,10 @@ function Home({ me, onSignedOut }: { me: Me; onSignedOut: () => void }) {
         return item
       }),
     )
-    if (result.kind === "ok") void loadReminders()
+    if (result.kind === "ok") {
+      speakReply(result.response.reply)
+      void loadReminders()
+    }
   }, [loadReminders])
 
   const flush = useCallback(async () => {
@@ -231,6 +237,36 @@ function Home({ me, onSignedOut }: { me: Me; onSignedOut: () => void }) {
     requestAnimationFrame(() => inputRef.current?.focus())
   }
 
+  async function decide(messageId: string, clientMessageId: string, accept: boolean) {
+    const result = await postConfirm(messageId, accept)
+    if (result.kind === "unauthorized") {
+      onSignedOut()
+      return
+    }
+    if (result.kind === "error") {
+      if (result.message) {
+        setMessages((prev) =>
+          prev.map((item) => (item.clientMessageId === clientMessageId ? { ...item, actionError: result.message } : item)),
+        )
+      }
+      return
+    }
+    speakReply(result.response.reply)
+    setMessages((prev) =>
+      prev.map((item) =>
+        item.clientMessageId === clientMessageId ? { ...item, response: result.response, actionError: null } : item,
+      ),
+    )
+    void loadReminders()
+  }
+
+  function toggleSpeech() {
+    const next = !spoken
+    setSpeechEnabled(next)
+    setSpoken(next)
+    if (next) unlockSpeech()
+  }
+
   async function signOut() {
     await logout()
     onSignedOut()
@@ -240,9 +276,14 @@ function Home({ me, onSignedOut }: { me: Me; onSignedOut: () => void }) {
     <>
       <header className="nav">
         <h1>{panel === "house" ? "Casa" : panel === "reminders" ? "Lembretes" : "Conversar"}</h1>
-        <button type="button" className="text" onClick={() => void signOut()}>
-          Sair
-        </button>
+        <div className="nav-actions">
+          <button type="button" className="text" aria-pressed={spoken} onClick={toggleSpeech}>
+            {spoken ? "Voz ligada" : "Voz"}
+          </button>
+          <button type="button" className="text" onClick={() => void signOut()}>
+            Sair
+          </button>
+        </div>
       </header>
       <div className="main">
         {panel === "chat" ? (
@@ -259,6 +300,24 @@ function Home({ me, onSignedOut }: { me: Me; onSignedOut: () => void }) {
                 {!item.pending && item.response && (
                   <div className="bubble agent">
                     <p className="reply">{item.response.reply}</p>
+                    {item.response.status === "proposal" && item.response.messageId && (
+                      <div className="actions">
+                        <button
+                          type="button"
+                          className="ghost"
+                          onClick={() => void decide(item.response!.messageId, item.clientMessageId, true)}
+                        >
+                          Gravar
+                        </button>
+                        <button
+                          type="button"
+                          className="ghost"
+                          onClick={() => void decide(item.response!.messageId, item.clientMessageId, false)}
+                        >
+                          Não
+                        </button>
+                      </div>
+                    )}
                     {item.response.status === "interpreted" &&
                       item.response.events.map((event) => (
                         <div key={event.id} className="event-actions">
@@ -317,7 +376,10 @@ function Home({ me, onSignedOut }: { me: Me; onSignedOut: () => void }) {
           aria-label="Falar"
           aria-pressed={talk.listening}
           onPointerDown={talk.onPointerDown}
-          onPointerUp={talk.onPointerUp}
+          onPointerUp={() => {
+            unlockSpeech()
+            talk.onPointerUp()
+          }}
           onPointerCancel={talk.onPointerUp}
           onContextMenu={talk.onContextMenu}
         >

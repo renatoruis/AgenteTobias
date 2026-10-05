@@ -67,7 +67,7 @@ export type EventSummary = {
 export type MessageResponse = {
   messageId: string
   conversationId: string
-  status: "interpreted" | "stored" | "clarification"
+  status: "interpreted" | "stored" | "clarification" | "proposal"
   reply: string
   events: EventSummary[]
   clarification: { question: string } | null
@@ -159,6 +159,14 @@ Repetir o mesmo `clientMessageId` no mesmo household devolve a resposta guardada
 `status: "stored"` significa texto guardado e interpretação adiada. `reply` é `Guardado, ainda por interpretar.`
 
 `status: "clarification"` não cria evento. `reply` é a única pergunta.
+
+`status: "proposal"` também não cria evento. `reply` é «Entendi: …. Gravo?». O rascunho fica em `result_json` e não volta no JSON da resposta.
+
+`POST /api/messages/:id/confirm` — corte 1. Corpo `{ "accept": true | false }`. `true` grava o rascunho e devolve `interpreted`. `false` devolve `Não gravei.` Sem segunda chamada ao modelo. O cliente não reenvia o rascunho.
+
+Uma frase seguinte «sim», «grava», «não» ou «deixa», com proposta aberta na mesma conversa, faz o mesmo sem modelo. Outra frase descarta o rascunho e interpreta-se à parte.
+
+Perguntas de data e hora («que dia é hoje», «que dia da semana», «que horas são», «que data é hoje») respondem em código, `Europe/Lisbon`, sem modelo e sem proposta.
 
 ### Eventos
 
@@ -316,7 +324,10 @@ O pacote domain monta `summary` e `reply` em código, a partir do evento gravado
 
 | Situação | reply |
 | --- | --- |
-| Despesa | `Registrei €80 no Continente.` |
+| Despesa | `Registrei €80 no Continente.` Se o dia não for hoje, a data civil entra na frase. |
+| Nota | `Nota: «Hoje fizemos o cadastro no app.», 5 de outubro de 2026.` |
+| Antes de gravar | `Entendi: €80 no Continente. Gravo?` |
+| Data | `Hoje é segunda-feira, 5 de outubro de 2026.` |
 | Combustível | `Registrei €70 de combustível no i30.` |
 | Compra com garantia | `Registrei a air fryer, garantia até 5 de outubro de 2028.` |
 | Clarificação de veículo | `Foi o i30 ou o Aveo?` |

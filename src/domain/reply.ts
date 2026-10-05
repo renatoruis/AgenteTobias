@@ -26,6 +26,8 @@ export type ReplyEvent = {
   text?: string | null
   title?: string | null
   warrantyEndsOn?: string | null
+  occurredOn?: string | null
+  todayOn?: string | null
   summary?: string | null
 }
 
@@ -35,17 +37,17 @@ export function replyFor(event: ReplyEvent): string {
   const warranty = formatWarrantyDate(event.warrantyEndsOn)
 
   if (event.type === "expense") {
-    if (money && name) return `Registrei ${money} no ${name}.`
-    if (money) return `Registrei ${money}.`
-    if (name) return `Registrei a despesa no ${name}.`
-    return "Registrei a despesa."
+    if (money && name) return withDay(`Registrei ${money} no ${name}.`, event)
+    if (money) return withDay(`Registrei ${money}.`, event)
+    if (name) return withDay(`Registrei a despesa no ${name}.`, event)
+    return withDay("Registrei a despesa.", event)
   }
 
   if (event.type === "vehicle.fuel") {
-    if (money && name) return `Registrei ${money} de combustível no ${name}.`
-    if (name) return `Registrei combustível no ${name}.`
-    if (money) return `Registrei ${money} de combustível.`
-    return "Registrei combustível."
+    if (money && name) return withDay(`Registrei ${money} de combustível no ${name}.`, event)
+    if (name) return withDay(`Registrei combustível no ${name}.`, event)
+    if (money) return withDay(`Registrei ${money} de combustível.`, event)
+    return withDay("Registrei combustível.", event)
   }
 
   if (event.type === "warranty" || (event.type === "purchase" && warranty)) {
@@ -55,16 +57,16 @@ export function replyFor(event: ReplyEvent): string {
   }
 
   if (event.type === "purchase") {
-    if (money && name) return `Registrei ${money} na ${name}.`
-    if (name) return `Registrei a ${name}.`
-    if (money) return `Registrei ${money}.`
-    return "Registrei a compra."
+    if (money && name) return withDay(`Registrei ${money} na ${name}.`, event)
+    if (name) return withDay(`Registrei a ${name}.`, event)
+    if (money) return withDay(`Registrei ${money}.`, event)
+    return withDay("Registrei a compra.", event)
   }
 
   if (event.type === "vehicle.maintenance") {
-    if (money && name) return `Registrei ${money} de manutenção no ${name}.`
-    if (name) return `Registrei a manutenção no ${name}.`
-    return "Registrei a manutenção."
+    if (money && name) return withDay(`Registrei ${money} de manutenção no ${name}.`, event)
+    if (name) return withDay(`Registrei a manutenção no ${name}.`, event)
+    return withDay("Registrei a manutenção.", event)
   }
 
   if (event.type === "object.location") {
@@ -73,14 +75,39 @@ export function replyFor(event: ReplyEvent): string {
     return "Registrei o sítio."
   }
 
-  if (event.type === "note") return "Registrei a nota."
-  if (event.type === "incident") return "Registrei o incidente."
+  if (event.type === "note") return quoted("Nota", event.text, event)
+  if (event.type === "incident") return quoted("Incidente", event.text, event)
   if (event.type === "reminder") {
     const title = event.title?.trim()
     return title ? `Registrei o lembrete ${title}.` : "Registrei o lembrete."
   }
 
   return "Registrei."
+}
+
+export function proposalFor(event: ReplyEvent): string {
+  if (event.type === "note" || event.type === "incident") {
+    const body = event.text?.trim() || summaryFor(event)
+    const day = formatWarrantyDate(event.occurredOn)
+    const detail = day ? `«${body}», ${day}` : `«${body}»`
+    return `Entendi: ${detail}. Gravo?`
+  }
+  const day = otherDay(event)
+  const detail = day ? `${summaryFor(event)}, ${day}` : summaryFor(event)
+  return `Entendi: ${detail}. Gravo?`
+}
+
+export function confirmPhrase(text: string): "yes" | "no" | null {
+  const folded = text
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .replace(/[?!.,]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+  if (folded === "sim" || folded === "grava" || folded === "podes gravar" || folded === "confirma") return "yes"
+  if (folded === "nao" || folded === "deixa" || folded === "nao graves" || folded === "nao grava") return "no"
+  return null
 }
 
 export function summaryFor(event: ReplyEvent): string {
@@ -148,6 +175,25 @@ export function replyForClarification(first: string, second: string): string {
 
 export function missingAmountQuestion(): string {
   return "Qual foi o valor?"
+}
+
+function quoted(label: string, text: string | null | undefined, event: ReplyEvent): string {
+  const body = text?.trim()
+  const day = formatWarrantyDate(event.occurredOn)
+  if (body && day) return `${label}: «${body}», ${day}.`
+  if (body) return `${label}: «${body}».`
+  return label === "Nota" ? "Registrei a nota." : "Registrei o incidente."
+}
+
+function withDay(sentence: string, event: ReplyEvent): string {
+  const day = otherDay(event)
+  if (!day) return sentence
+  return `${sentence.replace(/\.$/, "")}, ${day}.`
+}
+
+function otherDay(event: ReplyEvent): string | null {
+  if (!event.occurredOn || event.occurredOn === event.todayOn) return null
+  return formatWarrantyDate(event.occurredOn)
 }
 
 function eventName(event: ReplyEvent): string | null {

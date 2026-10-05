@@ -70,7 +70,14 @@ function parseMessage(value: unknown): MessageResponse | null {
   if (!value || typeof value !== "object") return null
   const row = value as Record<string, unknown>
   if (typeof row.reply !== "string" || typeof row.conversationId !== "string") return null
-  if (row.status !== "interpreted" && row.status !== "stored" && row.status !== "clarification") return null
+  if (
+    row.status !== "interpreted" &&
+    row.status !== "stored" &&
+    row.status !== "clarification" &&
+    row.status !== "proposal"
+  ) {
+    return null
+  }
   let clarification: { question: string } | null = null
   if (row.clarification && typeof row.clarification === "object" && "question" in row.clarification) {
     const question = (row.clarification as { question: unknown }).question
@@ -409,6 +416,16 @@ export async function fetchReminders(): Promise<
   } catch {
     return { kind: "error", message: null }
   }
+}
+
+export async function postConfirm(
+  messageId: string,
+  accept: boolean,
+): Promise<{ kind: "ok"; response: MessageResponse } | { kind: "unauthorized" } | { kind: "error"; message: string | null }> {
+  return postJson(`/api/messages/${encodeURIComponent(messageId)}/confirm`, { accept }, (body) => {
+    const response = parseMessage(body)
+    return response ? { kind: "ok", response } : null
+  })
 }
 
 export async function voidEvent(id: string): Promise<

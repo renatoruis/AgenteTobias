@@ -1,9 +1,11 @@
+import { clockQuestion, clockReply, replyIfClock } from "../../domain/dates"
 import type { MessageResponse, Session } from "../../domain/types"
-import { replyFor, storedReply } from "../../domain/reply"
+import { confirmPhrase, replyFor, storedReply } from "../../domain/reply"
 import { isToolName } from "../../domain/tools"
 import type { Env } from "../../env"
 import { dbFrom } from "../../infrastructure/d1/client"
 import { insertMessage } from "../../infrastructure/d1/queries"
+import { confirmMessage, type ProposalDraft } from "./confirm"
 import { AgentError } from "./errors"
 import { executeTool } from "./execute"
 import {
@@ -11,6 +13,7 @@ import {
   HISTORY_LIMIT,
   MODEL_TIMEOUT_MS,
   SYSTEM_PROMPT,
+  TIME_ZONE,
   modelTools,
   userContent,
 } from "./prompt"
@@ -20,6 +23,7 @@ import {
   dropConversation,
   eventsForMessage,
   openConversation,
+  openProposal,
   recentTurns,
   requireCorrectable,
   saveResult,
@@ -94,6 +98,35 @@ export async function handleMessage(
     return response
   }
 
+  const clock = clockQuestion(text)
+  if (clock) {
+    return commit(
+      env,
+      session,
+      messageId,
+      conversationId,
+      interpreted(messageId, conversationId, clockReply(clock, now, TIME_ZONE)),
+      null,
+    )
+  }
+
+  const pending = await openProposal(env.DB, session.householdId, conversationId)
+  if (pending && pending.id !== messageId) {
+    const decision = confirmPhrase(text)
+    if (decision) {
+      const settled = await confirmMessage(env, session, pending.id, decision === "yes")
+      return commit(
+        env,
+        session,
+        messageId,
+        conversationId,
+        { ...settled, messageId, conversationId, idempotent: false },
+        null,
+      )
+    }
+    await confirmMessage(env, session, pending.id, false)
+  }
+
   const corrects = input.correctsEventId
     ? await requireCorrectable(env.DB, session, input.correctsEventId)
     : null
@@ -111,7 +144,7 @@ export async function handleMessage(
             { role: "system", content: SYSTEM_PROMPT },
             {
               role: "user",
-              content: userContent(session.role, pickEntities(aliases, text), history, text),
+              content: userContent(session.role, pickEntities(aliases, text), history, text, now),
             },
           ],
           tools: modelTools(),
@@ -176,13 +209,28 @@ export async function handleMessage(
       read = { response: outcome.response, tool: call.name }
       continue
     }
-    return commit(env, session, messageId, conversationId, outcome.response, {
-      tool: call.name,
-      errorCode: null,
-      latencyMs,
-      ...tokens,
-      now,
-    })
+    if (outcome.terminal === "ask") {
+      const clocked = replyIfClock(text, outcome.response.reply, now, TIME_ZONE)
+      if (clocked) {
+        return commit(
+          env,
+          session,
+          messageId,
+          conversationId,
+          interpreted(messageId, conversationId, clocked),
+          { tool: call.name, errorCode: null, latencyMs, ...tokens, now },
+        )
+      }
+    }
+    return commit(
+      env,
+      session,
+      messageId,
+      conversationId,
+      outcome.response,
+      { tool: call.name, errorCode: null, latencyMs, ...tokens, now },
+      outcome.draft,
+    )
   }
 
   if (read) {
@@ -298,7 +346,10 @@ function replay(json: string, messageId: string, conversationId: string): Messag
   return {
     messageId: typeof body.messageId === "string" ? body.messageId : messageId,
     conversationId: typeof body.conversationId === "string" ? body.conversationId : conversationId,
-    status: body.status === "clarification" || body.status === "stored" ? body.status : "interpreted",
+    status:
+      body.status === "clarification" || body.status === "stored" || body.status === "proposal"
+        ? body.status
+        : "interpreted",
     reply: body.reply,
     events: Array.isArray(body.events) ? (body.events as MessageResponse["events"]) : [],
     clarification:
@@ -321,6 +372,18 @@ function stored(messageId: string, conversationId: string): MessageResponse {
   }
 }
 
+function interpreted(messageId: string, conversationId: string, reply: string): MessageResponse {
+  return {
+    messageId,
+    conversationId,
+    status: "interpreted",
+    reply,
+    events: [],
+    clarification: null,
+    idempotent: false,
+  }
+}
+
 async function commit(
   env: Env,
   session: Session,
@@ -334,26 +397,24 @@ async function commit(
     tokensIn: number | null
     tokensOut: number | null
     now: Date
-  },
+  } | null,
+  draft?: ProposalDraft,
 ): Promise<MessageResponse> {
   const columnStatus = response.status === "stored" ? "stored" : "interpreted"
-  await saveResult(
-    env.DB,
-    session.householdId,
-    messageId,
-    columnStatus,
-    JSON.stringify({ ...response, messageId, conversationId }),
-  )
-  await writeUsage(env.DB, {
-    messageId,
-    tool: usage.tool,
-    model: env.AI_INTERPRET_MODEL,
-    tokensIn: usage.tokensIn,
-    tokensOut: usage.tokensOut,
-    latencyMs: Math.max(0, Math.round(usage.latencyMs)),
-    errorCode: usage.errorCode,
-    createdAt: usage.now.toISOString(),
-  })
+  const stored = { ...response, messageId, conversationId, ...(draft ? { draft } : {}) }
+  await saveResult(env.DB, session.householdId, messageId, columnStatus, JSON.stringify(stored))
+  if (usage) {
+    await writeUsage(env.DB, {
+      messageId,
+      tool: usage.tool,
+      model: env.AI_INTERPRET_MODEL,
+      tokensIn: usage.tokensIn,
+      tokensOut: usage.tokensOut,
+      latencyMs: Math.max(0, Math.round(usage.latencyMs)),
+      errorCode: usage.errorCode,
+      createdAt: usage.now.toISOString(),
+    })
+  }
   return { ...response, messageId, conversationId }
 }
 

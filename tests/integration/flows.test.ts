@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest"
+import { confirmMessage } from "../../src/application/agent/confirm"
 import { handleMessage } from "../../src/application/agent/handleMessage"
 import { listEvents, seedHousehold, seedVehicle, withDb, type TestD1 } from "./d1"
 
@@ -66,11 +67,23 @@ describe("message flows", () => {
         now,
       )
 
-      expect(response.reply).toBe("Registrei €80 no Continente.")
+      expect(response.status).toBe("proposal")
+      expect(response.reply).toBe("Entendi: €80 no Continente. Gravo?")
+      expect(response.events).toEqual([])
       expect(response.idempotent).toBe(false)
       expect(ai.calls).toHaveLength(1)
       expect(ai.calls[0]?.model).toBe("@cf/qwen/qwen3-30b-a3b-fp8")
       expect(ai.calls[0]?.options).toMatchObject({ gateway: { id: "agentetobias" } })
+      expect(await listEvents(db, householdId)).toHaveLength(0)
+
+      const saved = await confirmMessage(
+        testEnv(db, ai.run),
+        { userId, householdId, role: "owner", deviceId },
+        response.messageId,
+        true,
+      )
+      expect(saved.reply).toBe("Registrei €80 no Continente.")
+      expect(ai.calls).toHaveLength(1)
 
       const events = await listEvents(db, householdId)
       expect(events).toHaveLength(1)
@@ -98,10 +111,17 @@ describe("message flows", () => {
       const first = await handleMessage(env, session, input, now)
       const second = await handleMessage(env, session, input, now)
 
-      expect(first.reply).toBe("Registrei €80 no Continente.")
+      expect(first.status).toBe("proposal")
+      expect(first.reply).toBe("Entendi: €80 no Continente. Gravo?")
       expect(second.idempotent).toBe(true)
       expect(second.reply).toBe(first.reply)
       expect(ai.calls).toHaveLength(1)
+      expect(await listEvents(db, householdId)).toHaveLength(0)
+
+      await confirmMessage(env, session, first.messageId, true)
+      const again = await confirmMessage(env, session, first.messageId, true)
+      expect(again.idempotent).toBe(true)
+      expect(again.reply).toBe("Registrei €80 no Continente.")
       expect(await listEvents(db, householdId)).toHaveLength(1)
     })
   })
@@ -142,6 +162,61 @@ describe("message flows", () => {
       expect(response.events).toEqual([])
       expect(response.clarification).toEqual({ question: "Foi o i30 ou o Aveo?" })
       expect(await listEvents(db, householdId)).toHaveLength(0)
+    })
+  })
+
+  it("answers the date without calling the model", async () => {
+    await withDb(async (db) => {
+      const householdId = crypto.randomUUID()
+      const userId = crypto.randomUUID()
+      const deviceId = crypto.randomUUID()
+      await seedHousehold(db, { householdId, userId, deviceId, name: "Casa" })
+      const ai = fakeAi(toolResponse("record_event", flowATool))
+      const response = await handleMessage(
+        testEnv(db, ai.run),
+        { userId, householdId, role: "owner", deviceId },
+        { clientMessageId: crypto.randomUUID(), text: "Que dia é hoje?" },
+        now,
+      )
+      expect(response.status).toBe("interpreted")
+      expect(response.reply).toBe("Hoje é segunda-feira, 5 de outubro de 2026.")
+      expect(response.events).toEqual([])
+      expect(ai.calls).toHaveLength(0)
+    })
+  })
+
+  it("saves a proposal when the next sentence is sim, without a second model call", async () => {
+    await withDb(async (db) => {
+      const householdId = crypto.randomUUID()
+      const userId = crypto.randomUUID()
+      const deviceId = crypto.randomUUID()
+      await seedHousehold(db, { householdId, userId, deviceId, name: "Casa" })
+      const ai = fakeAi(toolResponse("record_event", {
+        type: "note",
+        occurredAt: "hoje",
+        visibility: "household",
+        data: { text: "Hoje fizemos o cadastro no app." },
+      }))
+      const env = testEnv(db, ai.run)
+      const session = { userId, householdId, role: "owner" as const, deviceId }
+      const first = await handleMessage(
+        env,
+        session,
+        { clientMessageId: crypto.randomUUID(), text: "Hoje fizemos o cadastro no app." },
+        now,
+      )
+      expect(first.status).toBe("proposal")
+      expect(await listEvents(db, householdId)).toHaveLength(0)
+
+      const second = await handleMessage(
+        env,
+        session,
+        { clientMessageId: crypto.randomUUID(), text: "sim", conversationId: first.conversationId },
+        now,
+      )
+      expect(second.reply).toBe("Nota: «Hoje fizemos o cadastro no app.», 5 de outubro de 2026.")
+      expect(ai.calls).toHaveLength(1)
+      expect(await listEvents(db, householdId)).toHaveLength(1)
     })
   })
 })

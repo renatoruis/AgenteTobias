@@ -431,9 +431,10 @@ Criar entidade: se o alias normalizado já existe, a tool recusa a duplicação 
 
 Sem pontuação falsa.
 
-- Schema válido e uma entidade: confirmação curta. “Registrei €70 de combustível no i30.” Com Editar e Desfazer.
-- Schema válido e buracos opcionais: a mesma confirmação. Não se pergunta o posto.
-- Campo obrigatório em falta, ou duas entidades possíveis: uma pergunta. “Foi o i30 ou o Aveo?”
+- Schema válido e uma entidade: pergunta antes de gravar. “Entendi: €70 de combustível no i30. Gravo?” Gravar e Não, ou “sim” / “não” na frase seguinte, sem segunda chamada ao modelo. Depois de gravado, Editar e Desfazer.
+- Schema válido e buracos opcionais: a mesma pergunta. Não se pergunta o posto.
+- Campo obrigatório em falta, ou duas entidades possíveis: uma pergunta. “Foi o i30 ou o Aveo?” Sem proposta.
+- Data e hora: o relógio de Lisboa responde. O modelo não inventa o dia.
 
 ### Avaliação de modelos
 

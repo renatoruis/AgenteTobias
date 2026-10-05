@@ -4,12 +4,14 @@ import { civilDate, civilMonthRange, resolveWhen, startOfCivilDay } from "../../
 import { toAmountMinor } from "../../domain/money"
 import {
   missingAmountQuestion,
+  proposalFor,
   replyFor,
   replyForClarification,
   replyForSum,
   summaryFor,
   type ReplyEvent,
 } from "../../domain/reply"
+import type { ProposalDraft } from "./confirm"
 import type { EventSummary, EventType, MessageResponse, Session, Visibility } from "../../domain/types"
 import {
   askClarificationSchema,
@@ -39,13 +41,9 @@ import {
   eventVisibility,
   findAlias,
   findEntity,
-  insertReminder,
   latestEventId,
   listVehicles,
   voidFact,
-  writeFact,
-  indexFact,
-  retireFact,
   type EntityHit,
 } from "./sql"
 
@@ -54,8 +52,13 @@ const GENERIC_VEHICLE = new Set(["carro", "veiculo", "automovel", "viatura"])
 type TurnMessage = { id: string; text: string; conversationId: string }
 
 export type ToolOutcome =
-  | { kind: "done"; response: MessageResponse; terminal: "read" | "write" | "ask" }
+  | { kind: "done"; response: MessageResponse; terminal: "read" | "write" | "ask" | "proposal"; draft?: ProposalDraft }
   | { kind: "invalid" }
+
+type Resolved =
+  | { kind: "entity"; entity: EntityHit | null }
+  | { kind: "ask"; question: string }
+  | { kind: "create"; name: string; entityKind: string; normalized: string }
 
 export async function executeTool(
   env: Env,
@@ -90,7 +93,7 @@ export async function executeTool(
   if (call.name === "create_reminder") {
     const parsed = createReminderSchema.safeParse(args)
     if (!parsed.success) return { kind: "invalid" }
-    return done(await runReminder(env, session, message, parsed.data, now), "write")
+    return runReminder(env, session, message, parsed.data, now)
   }
   if (call.name === "attach_file") {
     const parsed = attachFileSchema.safeParse(args)
@@ -140,7 +143,9 @@ async function recordEvent(
 
   const prepared = await prepareEntity(env, session, message.text, type.data, raw, data)
   if (prepared.kind === "ask") return done(ask(message, prepared.question), "ask")
-  if (prepared.entity && needsEntityId(type.data)) data.entityId = prepared.entity.id
+  let pendingCreate = prepared.kind === "create" ? prepared : null
+  let entity = prepared.kind === "entity" ? prepared.entity : null
+  if (entity && needsEntityId(type.data)) data.entityId = entity.id
 
   if (type.data === "note" || type.data === "incident") {
     if (typeof data.text !== "string" || data.text.trim() === "") data.text = message.text
@@ -162,12 +167,12 @@ async function recordEvent(
   if (!parsed.success) return { kind: "invalid" }
   const record = parsed.data
 
-  let entity = prepared.entity
-  if (!entity && record.entityName) {
+  if (!entity && !pendingCreate && record.entityName) {
     const kind = record.entityKind ?? defaultKind(record.type)
-    const resolved = await resolveNamed(env.DB, session, message.text, record.entityName, kind)
+    const resolved = await resolveNamed(env.DB, session, message.text, record.entityName, kind, true)
     if (resolved.kind === "ask") return done(ask(message, resolved.question), "ask")
-    entity = resolved.entity
+    if (resolved.kind === "create") pendingCreate = resolved
+    else entity = resolved.entity
   }
 
   let visibility: Visibility = record.visibility
@@ -182,7 +187,7 @@ async function recordEvent(
   if (months != null && (record.type === "warranty" || record.type === "purchase")) {
     const ends = warrantyEndsOn(civilDate(occurred, TIME_ZONE), months, TIME_ZONE)
     warrantyEnds = ends
-    const label = entity?.name ?? record.entityName ?? "compra"
+    const label = entity?.name ?? pendingCreate?.name ?? record.entityName ?? "compra"
     reminder = {
       title: warrantyReminderTitle(label),
       dueAt: warrantyReminderDueAt(ends, TIME_ZONE),
@@ -191,22 +196,25 @@ async function recordEvent(
   }
 
   const amountMinor = amountOn(record)
+  const occurredOn = civilDate(occurred, TIME_ZONE)
+  const todayOn = civilDate(now, TIME_ZONE)
   const replyEvent: ReplyEvent = {
     type: record.type,
     amountMinor,
     currency: amountMinor == null ? null : "EUR",
-    entityName: entity?.name ?? record.entityName ?? null,
+    entityName: entity?.name ?? pendingCreate?.name ?? record.entityName ?? null,
     place: placeOn(record),
     text: textOn(record),
     title: titleOn(record),
     warrantyEndsOn: warrantyEnds,
+    occurredOn,
+    todayOn,
   }
   const summary = summaryFor(replyEvent)
-  const reply = replyFor(replyEvent)
-  const eventId = await writeFact(env.DB, {
-    householdId: session.householdId,
-    messageId: message.id,
-    actorId: session.userId,
+  const savedReply = replyFor(replyEvent)
+  const draft: ProposalDraft = {
+    kind: "event",
+    savedReply,
     type: record.type,
     occurredAt: occurred.toISOString(),
     visibility,
@@ -217,23 +225,20 @@ async function recordEvent(
     dataJson: JSON.stringify(record.data),
     supersedesEventId: corrects?.id ?? null,
     summary,
-    entityId: entity?.id ?? null,
-    entityRole: entity?.kind ?? null,
+    entity: entity
+      ? { mode: "link", id: entity.id, role: entity.kind }
+      : pendingCreate
+        ? {
+            mode: "create",
+            kind: pendingCreate.entityKind,
+            name: pendingCreate.name,
+            normalized: pendingCreate.normalized,
+            role: pendingCreate.entityKind,
+          }
+        : null,
     reminder,
-  })
-  await indexFact(env.DB, eventId)
-  if (corrects) await retireFact(env.DB, corrects.id)
-
-  const summaryEvent: EventSummary = {
-    id: eventId,
-    type: record.type,
-    occurredAt: occurred.toISOString(),
-    amountMinor,
-    currency: amountMinor == null ? null : "EUR",
-    summary,
-    warrantyEndsOn: warrantyEnds,
   }
-  return done(interpreted(message, reply, [summaryEvent]), "write")
+  return done(proposal(message, proposalFor(replyEvent)), "proposal", draft)
 }
 
 async function prepareEntity(
@@ -243,14 +248,14 @@ async function prepareEntity(
   type: EventType,
   raw: Record<string, unknown>,
   data: Record<string, unknown>,
-): Promise<{ kind: "entity"; entity: EntityHit | null } | { kind: "ask"; question: string }> {
+): Promise<Resolved> {
   if (!needsEntityId(type)) return { kind: "entity", entity: null }
   const name = typeof raw.entityName === "string" ? raw.entityName : undefined
   const given = typeof data.entityId === "string" ? data.entityId : undefined
   if (type === "vehicle.fuel" || type === "vehicle.maintenance") {
     return resolveVehicle(env.DB, session, text, name, given)
   }
-  if (name) return resolveNamed(env.DB, session, text, name, defaultKind(type))
+  if (name) return resolveNamed(env.DB, session, text, name, defaultKind(type), true)
   if (given) {
     const found = await findEntity(env.DB, session.householdId, given)
     if (found) return { kind: "entity", entity: found }
@@ -265,15 +270,15 @@ async function resolveVehicle(
   text: string,
   name: string | undefined,
   entityId: string | undefined,
-): Promise<{ kind: "entity"; entity: EntityHit | null } | { kind: "ask"; question: string }> {
+): Promise<Resolved> {
   if (entityId) {
     const found = await findEntity(db, session.householdId, entityId)
     if (found?.kind === "vehicle") return { kind: "entity", entity: found }
   }
 
   if (name && !isGenericVehicle(name)) {
-    const named = await resolveNamed(db, session, text, name, "vehicle")
-    if (named.kind === "ask") return named
+    const named = await resolveNamed(db, session, text, name, "vehicle", true)
+    if (named.kind === "ask" || named.kind === "create") return named
     if (named.entity?.kind === "vehicle") return named
   }
 
@@ -302,7 +307,8 @@ async function resolveNamed(
   text: string,
   name: string,
   kind: string,
-): Promise<{ kind: "entity"; entity: EntityHit | null } | { kind: "ask"; question: string }> {
+  deferCreate: boolean,
+): Promise<Resolved> {
   const normalized = normalizeAlias(name)
   if (!normalized) return { kind: "entity", entity: null }
   const existing = await findAlias(db, session.householdId, normalized)
@@ -310,6 +316,7 @@ async function resolveNamed(
   if (isGenericVehicle(normalized) || (kind === "vehicle" && mentionsGenericCar(text) && isGenericVehicle(name))) {
     return resolveVehicle(db, session, text, name, undefined)
   }
+  if (deferCreate) return { kind: "create", name: name.trim(), entityKind: kind, normalized }
   try {
     const created = await createEntity(db, session.householdId, kind, name.trim(), normalized)
     return { kind: "entity", entity: created }
@@ -327,15 +334,20 @@ async function runResolve(
   kind: string,
   name: string,
 ): Promise<ToolOutcome> {
-  const resolved = await resolveNamed(env.DB, session, message.text, name, kind)
+  const resolved = await resolveNamed(env.DB, session, message.text, name, kind, true)
   if (resolved.kind === "ask") return done(ask(message, resolved.question), "ask")
+  if (resolved.kind === "create") {
+    const savedReply = `Gravei ${resolved.name}.`
+    return done(proposal(message, `Entendi: ${resolved.name}. Gravo?`), "proposal", {
+      kind: "entity",
+      savedReply,
+      entityKind: resolved.entityKind,
+      name: resolved.name,
+      normalized: resolved.normalized,
+    })
+  }
   if (!resolved.entity) return { kind: "invalid" }
-  const reply = replyFor({
-    type: "note",
-    entityName: resolved.entity.name,
-    text: resolved.entity.name,
-  })
-  return done(interpreted(message, reply, []), "write")
+  return done(interpreted(message, `Já está na casa: ${resolved.entity.name}.`, []), "read")
 }
 
 async function runSearchEvents(
@@ -411,20 +423,21 @@ async function runReminder(
   message: TurnMessage,
   input: { title: string; dueAt: string; audience: "household" | "adults"; eventId?: string | null },
   now: Date,
-): Promise<MessageResponse> {
+): Promise<ToolOutcome> {
   const due = resolveWhen(input.dueAt, now, TIME_ZONE) ?? startOfCivilDay(now, TIME_ZONE)
   let eventId: string | null = null
   if (input.eventId && (await eventInHousehold(env.DB, session.householdId, input.eventId))) {
     eventId = input.eventId
   }
-  await insertReminder(env.DB, {
-    householdId: session.householdId,
-    eventId,
+  const savedReply = replyFor({ type: "reminder", title: input.title })
+  return done(proposal(message, proposalFor({ type: "reminder", title: input.title })), "proposal", {
+    kind: "reminder",
+    savedReply,
     title: input.title,
     dueAt: due.toISOString(),
     audience: input.audience,
+    eventId,
   })
-  return interpreted(message, replyFor({ type: "reminder", title: input.title }), [])
 }
 
 async function runAttach(
@@ -452,6 +465,18 @@ function interpreted(message: TurnMessage, reply: string, events: EventSummary[]
   }
 }
 
+function proposal(message: TurnMessage, reply: string): MessageResponse {
+  return {
+    messageId: message.id,
+    conversationId: message.conversationId,
+    status: "proposal",
+    reply,
+    events: [],
+    clarification: null,
+    idempotent: false,
+  }
+}
+
 function ask(message: TurnMessage, question: string): MessageResponse {
   return {
     messageId: message.id,
@@ -464,8 +489,12 @@ function ask(message: TurnMessage, question: string): MessageResponse {
   }
 }
 
-function done(response: MessageResponse, terminal: "read" | "write" | "ask"): ToolOutcome {
-  return { kind: "done", response, terminal }
+function done(
+  response: MessageResponse,
+  terminal: "read" | "write" | "ask" | "proposal",
+  draft?: ProposalDraft,
+): ToolOutcome {
+  return { kind: "done", response, terminal, draft }
 }
 
 function needsEntityId(type: EventType): boolean {

@@ -34,7 +34,7 @@ export type EventSummary = {
 export type MessageResponse = {
   messageId: string
   conversationId: string
-  status: "interpreted" | "stored" | "clarification"
+  status: "interpreted" | "stored" | "clarification" | "proposal"
   reply: string
   events: EventSummary[]
   clarification: { question: string } | null

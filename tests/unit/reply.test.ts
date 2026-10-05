@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { replyFor, replyForClarification, replyForSum, storedReply, summaryFor } from "../../src/domain/reply"
+import { confirmPhrase, proposalFor, replyFor, replyForClarification, replyForSum, storedReply, summaryFor } from "../../src/domain/reply"
 
 const expense = {
   type: "expense" as const,
@@ -53,6 +53,32 @@ describe("replyFor", () => {
 
   it("uses the stored reply when the model is down", () => {
     expect(storedReply()).toBe("Guardado, ainda por interpretar.")
+  })
+
+  it("quotes a note with the civil day", () => {
+    expect(
+      replyFor({
+        type: "note",
+        text: "Hoje fizemos o cadastro no app.",
+        occurredOn: "2026-10-05",
+        todayOn: "2026-10-05",
+      }),
+    ).toBe("Nota: «Hoje fizemos o cadastro no app.», 5 de outubro de 2026.")
+  })
+
+  it("adds the day to an expense that is not today", () => {
+    expect(replyFor({ ...expense, occurredOn: "2026-10-04", todayOn: "2026-10-05" })).toBe(
+      "Registrei €80 no Continente, 4 de outubro de 2026.",
+    )
+  })
+
+  it("asks before saving", () => {
+    expect(proposalFor({ type: "note", text: "primeiro dia", occurredOn: "2026-10-05" })).toBe(
+      "Entendi: «primeiro dia», 5 de outubro de 2026. Gravo?",
+    )
+    expect(confirmPhrase("Sim!")).toBe("yes")
+    expect(confirmPhrase("deixa")).toBe("no")
+    expect(confirmPhrase("não gastei 80")).toBeNull()
   })
 })
 

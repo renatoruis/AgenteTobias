@@ -12,7 +12,9 @@ Um shell, três zonas, telemóvel primeiro (largura 390). Safari iOS.
 2. **Chat.** Lista de bolhas. Campo de texto. Enviar. A bolha do utilizador aparece logo. A resposta substitui o estado “A registar…”.
 3. **Lembretes.** Lista por cima do chat, ou um separador “Lembretes” no mesmo ecrã. Título e data civil em Lisboa. Vazio: “Sem lembretes.”
 
-Botões em cada confirmação interpretada: **Desfazer** (`POST /api/events/:id/void`) e **Editar** (reabre o texto e reenvia com `correctsEventId` e um `clientMessageId` novo).
+Botões numa proposta (`status: "proposal"`): **Gravar** e **Não** (`POST /api/messages/:id/confirm`). Depois de gravado: **Desfazer** (`POST /api/events/:id/void`) e **Editar** (reabre o texto e reenvia com `correctsEventId` e um `clientMessageId` novo).
+
+Na barra, **Voz** liga a leitura da `reply` com `speechSynthesis`, `pt-PT`, preferência em `localStorage`. Soltar **Falar** destrava o sintetizador. Sem TTS na Cloudflare.
 
 ## Push-to-talk
 
@@ -25,7 +27,7 @@ Botão grande, redondo, fixo por cima do teclado. Rótulo acessível: “Falar�
 - A transcrição aparece numa caixa editável. Botão “Registar” chama `POST /api/messages` com esse texto e `source` implícito (o servidor marca `text`; o cliente não precisa do campo `source` porque não está no contrato do POST). O contrato de messages não tem `source`. Não o acrescentar. A mensagem de voz, para o servidor, é texto depois de editada.
 - Falha 503: “A voz falhou. Podes escrever.” O campo de texto fica utilizável.
 
-Não usar Web Speech API.
+Não usar a Web Speech API para transcrever. A fala de volta, se a pessoa ligar a Voz, é o sintetizador do telemóvel.
 
 ## Offline
 

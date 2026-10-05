@@ -11,10 +11,12 @@ Este pacote é o único que chama o modelo de interpretação. Uma chamada por m
 3. Se `correctsEventId` vier, confirmar que o evento está `active` neste household e que `canVoid` passa. Marcar `superseded` só depois da nova interpretação ter gravado um evento. Se a interpretação pedir clarificação, o evento antigo mantém-se `active`.
 4. Carregar no máximo 15 entidades cujo alias normalizado aparece no texto, mais as entidades veículo se a frase falar de carro, i30, ou abasteci. A query é do pacote database.
 5. Carregar as últimas 6 mensagens da `conversationId`, só o texto e o papel de quem falou. Sem eventos de outros households. Sem mensagens `private` de outra pessoa. Sem `adults` se o ator é `child`.
-6. Chamar `env.AI.run` com `AI_INTERPRET_MODEL` e `gateway.id = AI_GATEWAY_ID`. Pedido com tool choice obrigatório, temperatura 0. Timeout de espera: 8 s. Se falhar, não há segundo modelo no corte 1: gravar `status = stored`, `reply` do contrato, e uma linha em `usage` com `error_code`.
-7. Validar a tool com Zod. `householdId` da sessão sobrepõe qualquer campo que o modelo tenha posto.
-8. Executar uma tool de escrita ou `ask_clarification` ou uma tool de leitura. Se o modelo devolver várias, executar por ordem e parar na primeira que grave ou que pergunte. Ignorar tools desconhecidas como `validation` interna: tratar como falha de interpretação (`stored`), não como 500 opaco se a mensagem já está gravada.
-9. Gravar `result_json` e `usage` (tokens, latência, nome da tool, modelo). Sem o prompt.
+6. Se a frase for data ou hora, responder com o relógio de Lisboa e não chamar o modelo. O user message do modelo, quando há chamada, inclui a data civil de hoje.
+7. Se a conversa tiver uma proposta aberta: «sim», «grava», «não» ou «deixa» decidem sem modelo. Qualquer outra frase descarta a proposta e segue.
+8. Chamar `env.AI.run` com `AI_INTERPRET_MODEL` e `gateway.id = AI_GATEWAY_ID`. Pedido com tool choice obrigatório, temperatura 0. Timeout de espera: 8 s. Se falhar, não há segundo modelo no corte 1: gravar `status = stored`, `reply` do contrato, e uma linha em `usage` com `error_code`. Se o modelo perguntar o dia, a frase do relógio substitui a dele.
+9. Validar a tool com Zod. `householdId` da sessão sobrepõe qualquer campo que o modelo tenha posto.
+10. Executar uma tool de escrita ou `ask_clarification` ou uma tool de leitura. Se o modelo devolver várias, executar por ordem e parar na primeira que grave, proponha ou pergunte. Ignorar tools desconhecidas como `validation` interna: tratar como falha de interpretação (`stored`), não como 500 opaco se a mensagem já está gravada. `record_event`, `create_reminder` e entidade nova não escrevem já: devolvem `proposal` e guardam o rascunho em `result_json`.
+11. Gravar `result_json` e, se houve modelo, `usage` (tokens, latência, nome da tool, modelo). Sem o prompt. Sem o rascunho na resposta HTTP.
 
 ## Resolução de entidades
 
@@ -22,7 +24,7 @@ Este pacote é o único que chama o modelo de interpretação. Uma chamada por m
 
 - Normalizar o nome.
 - Se o alias existe neste household, devolver esse `entity_id`. Não criar outra.
-- Se não existe, criar `entities` + `aliases`.
+- Se não existe, a criação fica na proposta. Só o confirm insere `entities` + `aliases`.
 - Se a frase é “o carro” e há dois `kind = vehicle` activos, não criar nada: `ask_clarification` com os nomes (`Foi o i30 ou o Aveo?`). A pergunta lista no máximo dois nomes.
 
 `vehicle.fuel` sem `entityId` resolvido não grava.
@@ -48,7 +50,7 @@ Este pacote é o único que chama o modelo de interpretação. Uma chamada por m
 
 ## Rotas
 
-- `registerMessages` → `POST /api/messages`
+- `registerMessages` → `POST /api/messages` e `POST /api/messages/:id/confirm`
 - `registerEvents` → `POST /api/events/:id/void`
 - `registerReminders` → `GET /api/reminders`
 
@@ -69,7 +71,7 @@ A lista de entidades cabe no user message, não no system. Teto: 15 nomes.
 
 ## Aceitação
 
-- “gastei 80 euros no Continente” grava `expense`, `amount_minor = 8000`, uma entidade merchant, reply do contrato. O teste pode usar um fake de `AI.run` que devolve a tool. O fake vive em `tests/`, não neste pacote.
+- “gastei 80 euros no Continente” devolve proposta, zero eventos. O confirm grava `expense`, `amount_minor = 8000`, uma entidade merchant, reply do contrato. O teste pode usar um fake de `AI.run` que devolve a tool. O fake vive em `tests/`, não neste pacote.
 - O mesmo `clientMessageId` duas vezes não duplica o evento e não incrementa `usage` na segunda.
 - Dois veículos e a frase “abasteci o carro” devolve clarificação e zero eventos.
 - `child` não vê lembretes `adults`.

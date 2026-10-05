@@ -503,6 +503,47 @@ export async function latestEventId(
   return row?.id ?? null
 }
 
+export async function loadMessage(
+  db: D1Database,
+  householdId: string,
+  messageId: string,
+): Promise<{ id: string; conversationId: string; resultJson: string | null } | null> {
+  const row = await db
+    .prepare(
+      `SELECT id, conversation_id AS conversationId, result_json AS resultJson
+       FROM messages WHERE id = ? AND household_id = ?`,
+    )
+    .bind(messageId, householdId)
+    .first<{ id: string; conversationId: string; resultJson: string | null }>()
+  return row ?? null
+}
+
+export async function openProposal(
+  db: D1Database,
+  householdId: string,
+  conversationId: string,
+): Promise<{ id: string; conversationId: string; resultJson: string } | null> {
+  const listed = await db
+    .prepare(
+      `SELECT id, conversation_id AS conversationId, result_json AS resultJson
+       FROM messages
+       WHERE household_id = ? AND conversation_id = ? AND result_json IS NOT NULL
+       ORDER BY created_at DESC
+       LIMIT 6`,
+    )
+    .bind(householdId, conversationId)
+    .all<{ id: string; conversationId: string; resultJson: string }>()
+  for (const row of listed.results) {
+    try {
+      const body = JSON.parse(row.resultJson) as { status?: string; draft?: unknown }
+      if (body.status === "proposal" && body.draft) return row
+    } catch {
+      // A broken result is not an open proposal.
+    }
+  }
+  return null
+}
+
 export async function saveResult(
   db: D1Database,
   householdId: string,

@@ -8,6 +8,34 @@ const WEEKDAYS: Record<string, number> = {
   Sun: 7,
 }
 
+const WEEKDAY_NAME = [
+  "",
+  "segunda-feira",
+  "terça-feira",
+  "quarta-feira",
+  "quinta-feira",
+  "sexta-feira",
+  "sábado",
+  "domingo",
+] as const
+
+const MONTHS = [
+  "janeiro",
+  "fevereiro",
+  "março",
+  "abril",
+  "maio",
+  "junho",
+  "julho",
+  "agosto",
+  "setembro",
+  "outubro",
+  "novembro",
+  "dezembro",
+] as const
+
+export type ClockQuestion = "date" | "weekday" | "time"
+
 type CivilDate = { year: number; month: number; day: number }
 
 export function resolveWhen(text: string, now: Date, timeZone: string): Date | null {
@@ -35,6 +63,39 @@ export function startOfCivilDay(now: Date, timeZone: string): Date {
 
 export function civilDate(now: Date, timeZone: string): string {
   return formatIsoDate(civilFromInstant(now, timeZone))
+}
+
+/** Frases curtas sobre o relógio. O modelo não responde a isto. */
+export function clockQuestion(text: string): ClockQuestion | null {
+  const folded = fold(text).replace(/[?!.,]/g, " ").replace(/\s+/g, " ").trim()
+  if (/\bque horas sao\b/.test(folded) || /\bque hora e\b/.test(folded)) return "time"
+  if (/\bque dia da semana\b/.test(folded)) return "weekday"
+  if (/\bque (dia|data) (e|eh) hoje\b/.test(folded)) return "date"
+  return null
+}
+
+export function clockReply(kind: ClockQuestion, now: Date, timeZone: string): string {
+  const parts = dateParts(now, timeZone)
+  const weekday = WEEKDAY_NAME[parts.weekday] ?? "hoje"
+  if (kind === "time") return `São ${pad(parts.hour)}:${pad(parts.minute)}.`
+  if (kind === "weekday") return `Hoje é ${weekday}.`
+  const month = MONTHS[parts.month - 1] ?? ""
+  return `Hoje é ${weekday}, ${parts.day} de ${month} de ${parts.year}.`
+}
+
+export function spokenToday(now: Date, timeZone: string): string {
+  return clockReply("date", now, timeZone).replace(/^Hoje é /, "").replace(/\.$/, "")
+}
+
+/** Se a pergunta do modelo for sobre o dia, a frase do relógio substitui-a. */
+export function replyIfClock(userText: string, modelQuestion: string, now: Date, timeZone: string): string | null {
+  const kind = clockQuestion(userText) ?? clockQuestion(modelQuestion)
+  if (kind) return clockReply(kind, now, timeZone)
+  const folded = fold(modelQuestion)
+  if (/\b(dia|data) atual\b/.test(folded) || (/\bnao consigo saber\b/.test(folded) && /\bdia\b/.test(folded))) {
+    return clockReply("date", now, timeZone)
+  }
+  return null
 }
 
 /** Início inclusive e fim exclusivo do mês civil que contém `now`. */
