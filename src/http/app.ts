@@ -18,6 +18,13 @@ export type AppEnv = {
 }
 
 const CONTENT_SECURITY_POLICY = "default-src 'self'; frame-ancestors 'none'"
+const LANDING = `<!doctype html>
+<html lang="pt-PT">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AgenteTobias</title>
+<p>Abre a app AgenteTobias.</p>
+`
 
 function withSecurityHeaders(response: Response, traceId: string): Response {
   const headers = new Headers(response.headers)
@@ -58,11 +65,15 @@ registerReminders(app)
 registerSpeech(app)
 registerFiles(app)
 
+app.get("/", (c) => c.html(LANDING))
+
+app.get("/.well-known/apple-app-site-association", (c) => {
+  const team = c.env.APNS_TEAM_ID?.trim() ?? ""
+  const bundle = c.env.APNS_BUNDLE_ID?.trim() || "br.com.timdevops.tobias"
+  const apps = team ? [`${team}.${bundle}`] : []
+  return c.json({ webcredentials: { apps } })
+})
+
 app.notFound((c) => {
-  const path = c.req.path
-  const api = path === "/api" || path.startsWith("/api/")
-  if (!api && (c.req.method === "GET" || c.req.method === "HEAD")) {
-    return c.env.ASSETS.fetch(c.req.raw)
-  }
   return c.json({ error: { code: "not_found", message: "Não encontrado." } }, 404)
 })

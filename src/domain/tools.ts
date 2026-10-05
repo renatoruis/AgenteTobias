@@ -1,6 +1,5 @@
 import { z } from "zod"
 import { parseEur } from "./money"
-import { parseKilometers } from "./numbers"
 
 export const roleSchema = z.enum(["owner", "adult", "member", "child"])
 export const visibilitySchema = z.enum(["household", "adults", "private"])
@@ -15,6 +14,7 @@ export const eventTypeSchema = z.enum([
   "note",
   "incident",
   "reminder",
+  "income",
 ])
 export const entityKindSchema = z.enum([
   "vehicle",
@@ -28,22 +28,13 @@ export const entityKindSchema = z.enum([
 ])
 export const audienceSchema = z.enum(["household", "adults"])
 
+/** Empty strings and nulls become undefined so the model can send "" for a field it does not know. */
 const optionalText = z.preprocess(
   (value) => (value == null || (typeof value === "string" && value.trim() === "") ? undefined : value),
   z.string().trim().min(1).optional(),
 )
 
-const amountMinor = z.preprocess((value) => {
-  if (typeof value === "string") {
-    try {
-      return parseEur(value)
-    } catch {
-      return value
-    }
-  }
-  return value
-}, z.int().nonnegative())
-
+/** Integer cents, or text like "80 euros" / "70,50" that `parseEur` understands. */
 const optionalAmount = z.preprocess((value) => {
   if (value == null || value === "") return undefined
   if (typeof value === "string") {
@@ -56,168 +47,79 @@ const optionalAmount = z.preprocess((value) => {
   return value
 }, z.int().nonnegative().optional())
 
-const optionalKilometers = z.preprocess((value) => {
+const optionalMonths = z.preprocess((value) => {
   if (value == null || value === "") return undefined
-  if (typeof value === "string") {
-    try {
-      return parseKilometers(value)
-    } catch {
-      return value
-    }
-  }
+  if (typeof value === "string" && /^\d+$/.test(value.trim())) return Number(value.trim())
   return value
-}, z.int().nonnegative().optional())
+}, z.int().positive().max(1200).optional())
 
-const optionalLitros = z.preprocess(
+const optionalLimit = z.preprocess(
   (value) => (value == null || value === "" ? undefined : value),
-  z.number().nonnegative().optional(),
+  z.int().min(1).max(12).optional(),
 )
 
-const optionalCurrency = z.literal("EUR").nullish()
+export const entityRefSchema = z.object({
+  name: z.string().trim().min(1),
+  kind: entityKindSchema,
+})
 
-const recordMeta = {
-  occurredAt: z.string().trim().min(1),
-  visibility: visibilitySchema,
-  entityName: optionalText,
-  entityKind: entityKindSchema.nullish(),
+const memoryFields = {
+  text: z.string().trim().min(1),
+  type: eventTypeSchema,
+  occurredAt: optionalText,
+  amountMinor: optionalAmount,
+  entities: z.array(entityRefSchema).max(4).optional(),
+  visibility: visibilitySchema.optional(),
+  remindAt: optionalText,
+  warrantyMonths: optionalMonths,
+  place: optionalText,
+  details: z.record(z.string(), z.unknown()).optional(),
 }
 
-export const expenseDataSchema = z.object({
-  amountMinor,
-  currency: z.literal("EUR"),
-  merchant: optionalText,
-  note: optionalText,
-})
+export const rememberSchema = z.object(memoryFields)
 
-export const purchaseDataSchema = z.object({
-  amountMinor: optionalAmount,
-  currency: optionalCurrency,
-  product: optionalText,
-})
-
-export const vehicleFuelDataSchema = z.object({
-  entityId: z.uuid(),
-  litros: optionalLitros,
-  km: optionalKilometers,
-  posto: optionalText,
-  amountMinor: optionalAmount,
-  currency: optionalCurrency,
-})
-
-export const vehicleMaintenanceDataSchema = z.object({
-  entityId: z.uuid(),
-  amountMinor: optionalAmount,
-  currency: optionalCurrency,
-  note: optionalText,
-})
-
-export const warrantyDataSchema = z.object({
-  warrantyMonths: z.int().positive(),
-  entityId: z.uuid(),
-  amountMinor: optionalAmount,
-  currency: optionalCurrency,
-})
-
-export const objectLocationDataSchema = z.object({
-  entityId: z.uuid(),
-  place: z.string().trim().min(1),
-  note: optionalText,
-})
-
-export const noteDataSchema = z.object({
-  text: z.string().trim().min(1),
-})
-
-export const incidentDataSchema = z.object({
-  text: z.string().trim().min(1),
-})
-
-export const reminderDataSchema = z.object({
-  title: z.string().trim().min(1),
-  dueAt: z.string().trim().min(1),
-})
-
-export const eventDataSchemas = {
-  expense: expenseDataSchema,
-  purchase: purchaseDataSchema,
-  "vehicle.fuel": vehicleFuelDataSchema,
-  "vehicle.maintenance": vehicleMaintenanceDataSchema,
-  warranty: warrantyDataSchema,
-  "object.location": objectLocationDataSchema,
-  note: noteDataSchema,
-  incident: incidentDataSchema,
-  reminder: reminderDataSchema,
-} as const
-
-export const recordEventSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("expense"), ...recordMeta, data: expenseDataSchema }),
-  z.object({ type: z.literal("purchase"), ...recordMeta, data: purchaseDataSchema }),
-  z.object({ type: z.literal("vehicle.fuel"), ...recordMeta, data: vehicleFuelDataSchema }),
-  z.object({ type: z.literal("vehicle.maintenance"), ...recordMeta, data: vehicleMaintenanceDataSchema }),
-  z.object({ type: z.literal("warranty"), ...recordMeta, data: warrantyDataSchema }),
-  z.object({ type: z.literal("object.location"), ...recordMeta, data: objectLocationDataSchema }),
-  z.object({ type: z.literal("note"), ...recordMeta, data: noteDataSchema }),
-  z.object({ type: z.literal("incident"), ...recordMeta, data: incidentDataSchema }),
-  z.object({ type: z.literal("reminder"), ...recordMeta, data: reminderDataSchema }),
-])
-
-export const resolveOrCreateEntitySchema = z.object({
-  kind: entityKindSchema,
-  name: z.string().trim().min(1),
-})
-
-export const askClarificationSchema = z.object({
-  question: z.string().trim().min(1),
-})
-
-export const searchEventsSchema = z.object({
+export const recallSchema = z.object({
+  query: optionalText,
   type: eventTypeSchema.optional(),
-  entityId: z.uuid().optional(),
-  entityName: optionalText,
-  from: z.string().trim().min(1).optional(),
-  to: z.string().trim().min(1).optional(),
-  amountMinor: optionalAmount,
+  entity: optionalText,
+  from: optionalText,
+  to: optionalText,
+  limit: optionalLimit,
 })
 
-export const searchTextSchema = z.object({
-  query: z.string().trim().min(1),
+export const totalSchema = z.object({
+  type: eventTypeSchema.optional(),
+  entity: optionalText,
+  from: optionalText,
+  to: optionalText,
 })
 
-export const voidEventSchema = z.object({
+export const amendSchema = z.object({
+  eventId: z.uuid(),
+  ...memoryFields,
+  text: optionalText,
+  type: eventTypeSchema.optional(),
+})
+
+export const voidSchema = z.object({
   eventId: z.uuid(),
 })
 
-export const createReminderSchema = z.object({
-  title: z.string().trim().min(1),
-  dueAt: z.string().trim().min(1),
-  audience: audienceSchema,
-  eventId: z.uuid().nullish(),
-})
-
-export const attachFileSchema = z.object({
-  fileId: z.uuid(),
-})
-
 export const toolSchemas = {
-  record_event: recordEventSchema,
-  resolve_or_create_entity: resolveOrCreateEntitySchema,
-  ask_clarification: askClarificationSchema,
-  search_events: searchEventsSchema,
-  search_text: searchTextSchema,
-  void_event: voidEventSchema,
-  create_reminder: createReminderSchema,
-  attach_file: attachFileSchema,
+  remember: rememberSchema,
+  recall: recallSchema,
+  total: totalSchema,
+  amend: amendSchema,
+  void: voidSchema,
 } as const
 
 export type ToolName = keyof typeof toolSchemas
-export type RecordEventInput = z.infer<typeof recordEventSchema>
-export type ResolveOrCreateEntityInput = z.infer<typeof resolveOrCreateEntitySchema>
-export type AskClarificationInput = z.infer<typeof askClarificationSchema>
-export type SearchEventsInput = z.infer<typeof searchEventsSchema>
-export type SearchTextInput = z.infer<typeof searchTextSchema>
-export type VoidEventInput = z.infer<typeof voidEventSchema>
-export type CreateReminderInput = z.infer<typeof createReminderSchema>
-export type AttachFileInput = z.infer<typeof attachFileSchema>
+export type RememberInput = z.infer<typeof rememberSchema>
+export type RecallInput = z.infer<typeof recallSchema>
+export type TotalInput = z.infer<typeof totalSchema>
+export type AmendInput = z.infer<typeof amendSchema>
+export type VoidInput = z.infer<typeof voidSchema>
+export type EntityRef = z.infer<typeof entityRefSchema>
 
 export function isToolName(name: string): name is ToolName {
   return Object.hasOwn(toolSchemas, name)

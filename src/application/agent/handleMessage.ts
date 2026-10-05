@@ -1,46 +1,63 @@
-import { clockQuestion, clockReply, replyIfClock } from "../../domain/dates"
-import type { MessageResponse, Session } from "../../domain/types"
+import { clockQuestion, clockReply } from "../../domain/dates"
 import { confirmPhrase, replyFor, storedReply } from "../../domain/reply"
-import { isToolName } from "../../domain/tools"
+import type { EventSummary, MessageResponse, Session } from "../../domain/types"
 import type { Env } from "../../env"
 import { dbFrom } from "../../infrastructure/d1/client"
 import { insertMessage } from "../../infrastructure/d1/queries"
 import { confirmMessage, type ProposalDraft } from "./confirm"
+import {
+  historyMessages,
+  MAX_ITERATIONS,
+  MODEL_TIMEOUT_MS,
+  HISTORY_LIMIT,
+  systemContent,
+  TIME_ZONE,
+  toolDefinitions,
+  userContent,
+  type ChatMessage,
+  type ChatToolCall,
+} from "./context"
 import { AgentError } from "./errors"
 import { executeTool } from "./execute"
 import {
-  ENTITY_LIMIT,
-  HISTORY_LIMIT,
-  MODEL_TIMEOUT_MS,
-  SYSTEM_PROMPT,
-  TIME_ZONE,
-  modelTools,
-  userContent,
-} from "./prompt"
-import {
-  activeAliases,
   drizzleDb,
   dropConversation,
   eventsForMessage,
+  householdCard,
   openConversation,
   openProposal,
   recentTurns,
   requireCorrectable,
   saveResult,
+  speakerName,
+  todayEvents,
   toSummary,
   writeUsage,
-  type EntityHit,
 } from "./sql"
-import { normalizeAlias } from "../../domain/alias"
 
 export type MessageInput = {
   clientMessageId: string
   text: string
   conversationId?: string
+  /** The Edit button: this sentence corrects that event. The model is told to use `amend`. */
   correctsEventId?: string
 }
 
-const VEHICLE_WORDS = new Set(["carro", "i30", "abasteci"])
+type ModelReply = {
+  text: string | null
+  calls: ChatToolCall[]
+  tokensIn: number | null
+  tokensOut: number | null
+}
+
+type Usage = {
+  tool: string | null
+  model: string
+  errorCode: string | null
+  latencyMs: number
+  tokensIn: number | null
+  tokensOut: number | null
+}
 
 export async function handleMessage(
   env: Env,
@@ -79,35 +96,15 @@ export async function handleMessage(
 
   const already = await eventsForMessage(env.DB, session.householdId, messageId)
   if (already.length > 0) {
-    const response: MessageResponse = {
-      messageId,
-      conversationId,
-      status: "interpreted",
-      reply: replyFor({
-        type: already[0]!.type,
-        amountMinor: already[0]!.amountMinor,
-        currency: already[0]!.currency,
-        entityName: already[0]!.entityName,
-        warrantyEndsOn: already[0]!.warrantyEndsOn,
-      }),
-      events: already.map(toSummary),
-      clarification: null,
-      idempotent: true,
-    }
+    const first = already[0]!
+    const response = interpreted(messageId, conversationId, replyFor(first), already.map(toSummary))
     await saveResult(env.DB, session.householdId, messageId, "interpreted", JSON.stringify(response))
-    return response
+    return { ...response, idempotent: true }
   }
 
   const clock = clockQuestion(text)
   if (clock) {
-    return commit(
-      env,
-      session,
-      messageId,
-      conversationId,
-      interpreted(messageId, conversationId, clockReply(clock, now, TIME_ZONE)),
-      null,
-    )
+    return commit(env, session, messageId, conversationId, interpreted(messageId, conversationId, clockReply(clock, now, TIME_ZONE), []), null)
   }
 
   const pending = await openProposal(env.DB, session.householdId, conversationId)
@@ -115,14 +112,7 @@ export async function handleMessage(
     const decision = confirmPhrase(text)
     if (decision) {
       const settled = await confirmMessage(env, session, pending.id, decision === "yes")
-      return commit(
-        env,
-        session,
-        messageId,
-        conversationId,
-        { ...settled, messageId, conversationId, idempotent: false },
-        null,
-      )
+      return commit(env, session, messageId, conversationId, { ...settled, messageId, conversationId, idempotent: false }, null)
     }
     await confirmMessage(env, session, pending.id, false)
   }
@@ -131,257 +121,186 @@ export async function handleMessage(
     ? await requireCorrectable(env.DB, session, input.correctsEventId)
     : null
 
-  const aliases = await activeAliases(env.DB, session.householdId)
-  const history = await recentTurns(env.DB, session, conversationId, messageId, HISTORY_LIMIT)
+  const [card, speaker, today, turns] = await Promise.all([
+    householdCard(env.DB, session),
+    speakerName(env.DB, session),
+    todayEvents(env.DB, session, now),
+    recentTurns(env.DB, session, conversationId, messageId, HISTORY_LIMIT),
+  ])
+
+  const messages: ChatMessage[] = [
+    { role: "system", content: systemContent(card) },
+    ...historyMessages(turns),
+    {
+      role: "user",
+      content: userContent({ name: speaker, role: session.role }, today, now, text, corrects?.id ?? null),
+    },
+  ]
+
   const started = Date.now()
-  let raw: unknown
-  try {
-    raw = await withTimeout(
-      env.AI.run(
-        env.AI_INTERPRET_MODEL,
-        {
-          messages: [
-            { role: "system", content: SYSTEM_PROMPT },
-            {
-              role: "user",
-              content: userContent(session.role, pickEntities(aliases, text), history, text, now),
-            },
-          ],
-          tools: modelTools(),
-          tool_choice: "required",
-          temperature: 0,
-        },
-        {
-          gateway: {
-            id: env.AI_GATEWAY_ID,
-            skipCache: true,
-            requestTimeoutMs: MODEL_TIMEOUT_MS,
-          },
-        },
-      ),
-      MODEL_TIMEOUT_MS,
-    )
-  } catch (error) {
-    const code = error instanceof Error && error.message === "timeout" ? "timeout" : "model_error"
-    return commit(env, session, messageId, conversationId, stored(messageId, conversationId), {
-      tool: null,
-      errorCode: code,
-      latencyMs: Date.now() - started,
-      tokensIn: null,
-      tokensOut: null,
-      now,
-    })
+  const usage: Usage = {
+    tool: null,
+    model: env.AI_INTERPRET_MODEL,
+    errorCode: null,
+    latencyMs: 0,
+    tokensIn: null,
+    tokensOut: null,
   }
+  const events: EventSummary[] = []
+  let draft: ProposalDraft | undefined
+  let finalText: string | null = null
+  let proposalReply: string | null = null
 
-  const tokens = readTokens(raw)
-  const latencyMs = Date.now() - started
-  const calls = extractToolCalls(raw)
-  let read: { response: MessageResponse; tool: string } | null = null
+  for (let iteration = 0; iteration < MAX_ITERATIONS && finalText === null && proposalReply === null; iteration++) {
+    const reply = await askModel(env, messages, usage)
+    if (!reply) {
+      usage.latencyMs = Date.now() - started
+      return commit(env, session, messageId, conversationId, stored(messageId, conversationId), usage)
+    }
 
-  for (const call of calls) {
-    if (!isToolName(call.name)) {
-      return commit(env, session, messageId, conversationId, stored(messageId, conversationId), {
-        tool: null,
-        errorCode: "invalid_tool",
-        latencyMs,
-        ...tokens,
-        now,
-      })
-    }
-    const outcome = await executeTool(
-      env,
-      session,
-      { id: messageId, text, conversationId },
-      call,
-      now,
-      corrects,
-    )
-    if (outcome.kind === "invalid") {
-      return commit(env, session, messageId, conversationId, stored(messageId, conversationId), {
-        tool: call.name,
-        errorCode: "invalid_tool",
-        latencyMs,
-        ...tokens,
-        now,
-      })
-    }
-    if (outcome.terminal === "read") {
-      read = { response: outcome.response, tool: call.name }
+    if (reply.calls.length === 0) {
+      finalText = reply.text?.trim() || null
+      if (finalText === null) break
       continue
     }
-    if (outcome.terminal === "ask") {
-      const clocked = replyIfClock(text, outcome.response.reply, now, TIME_ZONE)
-      if (clocked) {
-        return commit(
-          env,
-          session,
-          messageId,
-          conversationId,
-          interpreted(messageId, conversationId, clocked),
-          { tool: call.name, errorCode: null, latencyMs, ...tokens, now },
-        )
+
+    messages.push({ role: "assistant", content: reply.text, tool_calls: reply.calls })
+    for (const call of reply.calls) {
+      usage.tool ??= call.function.name
+      const outcome = await executeTool(
+        env,
+        session,
+        { id: messageId, text, conversationId },
+        { name: call.function.name, arguments: parseArguments(call.function.arguments) },
+        now,
+      )
+      if (outcome.kind === "proposal") {
+        proposalReply = outcome.reply
+        draft = outcome.draft
+        break
       }
+      events.push(...outcome.events)
+      messages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(outcome.payload) })
     }
-    return commit(
-      env,
-      session,
+  }
+
+  usage.latencyMs = Date.now() - started
+
+  if (proposalReply !== null && draft) {
+    const response: MessageResponse = {
       messageId,
       conversationId,
-      outcome.response,
-      { tool: call.name, errorCode: null, latencyMs, ...tokens, now },
-      outcome.draft,
-    )
+      status: "proposal",
+      reply: proposalReply,
+      events: [],
+      idempotent: false,
+    }
+    return commit(env, session, messageId, conversationId, response, usage, draft)
   }
 
-  if (read) {
-    return commit(env, session, messageId, conversationId, read.response, {
-      tool: read.tool,
-      errorCode: null,
-      latencyMs,
-      ...tokens,
-      now,
-    })
-  }
-
-  return commit(env, session, messageId, conversationId, stored(messageId, conversationId), {
-    tool: null,
-    errorCode: "invalid_tool",
-    latencyMs,
-    ...tokens,
-    now,
-  })
+  const reply = finalText ?? fallbackReply(events)
+  return commit(env, session, messageId, conversationId, interpreted(messageId, conversationId, reply, events), usage)
 }
 
-function pickEntities(aliases: EntityHit[], text: string): Array<{ id: string; name: string; kind: string }> {
-  const folded = normalizeAlias(text)
-  const words = new Set(folded.split(" "))
-  const wantVehicles = [...VEHICLE_WORDS].some((word) => words.has(word))
-  const chosen: EntityHit[] = []
-  const seen = new Set<string>()
-
-  const push = (entity: EntityHit) => {
-    if (seen.has(entity.id) || chosen.length >= ENTITY_LIMIT) return
-    seen.add(entity.id)
-    chosen.push(entity)
-  }
-
-  if (wantVehicles) {
-    for (const entity of aliases) {
-      if (entity.kind === "vehicle") push(entity)
+/** Primary model, then one try on the fallback. Null when both fail. */
+async function askModel(env: Env, messages: ChatMessage[], usage: Usage): Promise<ModelReply | null> {
+  const candidates = [env.AI_INTERPRET_MODEL, env.AI_FALLBACK_MODEL].filter(
+    (model): model is string => typeof model === "string" && model.trim() !== "",
+  )
+  for (const model of candidates) {
+    try {
+      const raw = await withTimeout(
+        env.AI.run(
+          model,
+          {
+            messages,
+            tools: toolDefinitions(),
+            tool_choice: "auto",
+            ...providerOptions(model),
+          },
+          { gateway: { id: env.AI_GATEWAY_ID, skipCache: true, requestTimeoutMs: MODEL_TIMEOUT_MS } },
+        ),
+        MODEL_TIMEOUT_MS,
+      )
+      const reply = readReply(raw)
+      usage.model = model
+      usage.errorCode = null
+      usage.tokensIn = add(usage.tokensIn, reply.tokensIn)
+      usage.tokensOut = add(usage.tokensOut, reply.tokensOut)
+      return reply
+    } catch (error) {
+      usage.errorCode = error instanceof Error && error.message === "timeout" ? "timeout" : "model_error"
     }
   }
-  for (const entity of aliases) {
-    if (mentioned(entity.normalized, folded)) push(entity)
-  }
-  return chosen.map((entity) => ({ id: entity.id, name: entity.name, kind: entity.kind }))
+  return null
 }
 
-function mentioned(alias: string, folded: string): boolean {
-  if (alias.length < 2) return false
-  let from = 0
-  while (from < folded.length) {
-    const index = folded.indexOf(alias, from)
-    if (index < 0) return false
-    const before = index === 0 || !/[a-z0-9]/.test(folded[index - 1] ?? "")
-    const afterIndex = index + alias.length
-    const after = afterIndex >= folded.length || !/[a-z0-9]/.test(folded[afterIndex] ?? "")
-    if (before && after) return true
-    from = index + 1
-  }
-  return false
+function providerOptions(model: string): Record<string, unknown> {
+  if (model.startsWith("openai/gpt-5")) return { reasoning_effort: "low" }
+  return {}
 }
 
-function extractToolCalls(raw: unknown): Array<{ name: string; arguments: unknown }> {
+function readReply(raw: unknown): ModelReply {
   const body = asRecord(typeof raw === "string" ? parseJson(raw) : raw)
-  const direct = readCalls(body.tool_calls)
-  if (direct.length > 0) return direct
-
-  const choices = Array.isArray(body.choices) ? body.choices : []
-  const message = asRecord(asRecord(choices[0]).message)
-  const nested = readCalls(message.tool_calls)
-  if (nested.length > 0) return nested
-
-  if (typeof body.type === "string" && body.occurredAt && body.visibility) {
-    return [{ name: "record_event", arguments: body }]
+  const choice = asRecord(asRecord(Array.isArray(body.choices) ? body.choices[0] : undefined).message)
+  const message = Object.keys(choice).length > 0 ? choice : body
+  const usage = asRecord(body.usage)
+  return {
+    text: typeof message.content === "string" ? message.content : typeof body.response === "string" ? body.response : null,
+    calls: readCalls(message.tool_calls),
+    tokensIn: readNumber(usage.prompt_tokens ?? usage.input_tokens),
+    tokensOut: readNumber(usage.completion_tokens ?? usage.output_tokens),
   }
-  if (typeof body.question === "string" && body.type == null) {
-    return [{ name: "ask_clarification", arguments: body }]
-  }
-  if (typeof body.name === "string") {
-    return [{ name: body.name, arguments: body.arguments ?? body }]
-  }
-  return []
 }
 
-function readCalls(value: unknown): Array<{ name: string; arguments: unknown }> {
+function readCalls(value: unknown): ChatToolCall[] {
   if (!Array.isArray(value)) return []
-  const calls: Array<{ name: string; arguments: unknown }> = []
+  const calls: ChatToolCall[] = []
   for (const entry of value) {
     const call = asRecord(entry)
     const fn = asRecord(call.function)
     const name = typeof fn.name === "string" ? fn.name : typeof call.name === "string" ? call.name : ""
     if (!name) continue
     const args = fn.name ? fn.arguments : call.arguments
-    calls.push({ name, arguments: typeof args === "string" ? (parseJson(args) ?? {}) : (args ?? {}) })
+    calls.push({
+      id: typeof call.id === "string" && call.id ? call.id : crypto.randomUUID(),
+      type: "function",
+      function: { name, arguments: typeof args === "string" ? args : JSON.stringify(args ?? {}) },
+    })
   }
   return calls
 }
 
-function readTokens(raw: unknown): { tokensIn: number | null; tokensOut: number | null } {
-  const usage = asRecord(asRecord(raw).usage)
-  const input = usage.prompt_tokens ?? usage.input_tokens
-  const output = usage.completion_tokens ?? usage.output_tokens
-  return {
-    tokensIn: typeof input === "number" ? Math.round(input) : null,
-    tokensOut: typeof output === "number" ? Math.round(output) : null,
-  }
+function parseArguments(value: string): unknown {
+  return parseJson(value) ?? {}
+}
+
+function fallbackReply(events: EventSummary[]): string {
+  const last = events[events.length - 1]
+  return last ? replyFor(last) : "Feito."
 }
 
 function replay(json: string, messageId: string, conversationId: string): MessageResponse {
-  const parsed = parseJson(json)
-  const body = asRecord(parsed)
+  const body = asRecord(parseJson(json))
   if (typeof body.reply !== "string" || typeof body.status !== "string") {
     return { ...stored(messageId, conversationId), idempotent: true }
   }
   return {
-    messageId: typeof body.messageId === "string" ? body.messageId : messageId,
-    conversationId: typeof body.conversationId === "string" ? body.conversationId : conversationId,
-    status:
-      body.status === "clarification" || body.status === "stored" || body.status === "proposal"
-        ? body.status
-        : "interpreted",
+    messageId,
+    conversationId,
+    status: body.status === "stored" || body.status === "proposal" ? body.status : "interpreted",
     reply: body.reply,
-    events: Array.isArray(body.events) ? (body.events as MessageResponse["events"]) : [],
-    clarification:
-      body.clarification && typeof asRecord(body.clarification).question === "string"
-        ? { question: String(asRecord(body.clarification).question) }
-        : null,
+    events: Array.isArray(body.events) ? (body.events as EventSummary[]) : [],
     idempotent: true,
   }
 }
 
 function stored(messageId: string, conversationId: string): MessageResponse {
-  return {
-    messageId,
-    conversationId,
-    status: "stored",
-    reply: storedReply(),
-    events: [],
-    clarification: null,
-    idempotent: false,
-  }
+  return { messageId, conversationId, status: "stored", reply: storedReply(), events: [], idempotent: false }
 }
 
-function interpreted(messageId: string, conversationId: string, reply: string): MessageResponse {
-  return {
-    messageId,
-    conversationId,
-    status: "interpreted",
-    reply,
-    events: [],
-    clarification: null,
-    idempotent: false,
-  }
+function interpreted(messageId: string, conversationId: string, reply: string, events: EventSummary[]): MessageResponse {
+  return { messageId, conversationId, status: "interpreted", reply, events, idempotent: false }
 }
 
 async function commit(
@@ -390,29 +309,22 @@ async function commit(
   messageId: string,
   conversationId: string,
   response: MessageResponse,
-  usage: {
-    tool: string | null
-    errorCode: string | null
-    latencyMs: number
-    tokensIn: number | null
-    tokensOut: number | null
-    now: Date
-  } | null,
+  usage: Usage | null,
   draft?: ProposalDraft,
 ): Promise<MessageResponse> {
   const columnStatus = response.status === "stored" ? "stored" : "interpreted"
-  const stored = { ...response, messageId, conversationId, ...(draft ? { draft } : {}) }
-  await saveResult(env.DB, session.householdId, messageId, columnStatus, JSON.stringify(stored))
+  const body = { ...response, messageId, conversationId, ...(draft ? { draft } : {}) }
+  await saveResult(env.DB, session.householdId, messageId, columnStatus, JSON.stringify(body))
   if (usage) {
     await writeUsage(env.DB, {
       messageId,
       tool: usage.tool,
-      model: env.AI_INTERPRET_MODEL,
+      model: usage.model,
       tokensIn: usage.tokensIn,
       tokensOut: usage.tokensOut,
       latencyMs: Math.max(0, Math.round(usage.latencyMs)),
       errorCode: usage.errorCode,
-      createdAt: usage.now.toISOString(),
+      createdAt: new Date().toISOString(),
     })
   }
   return { ...response, messageId, conversationId }
@@ -430,6 +342,16 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return Promise.race([promise, timeout]).finally(() => {
     if (timer !== undefined) clearTimeout(timer)
   })
+}
+
+function add(a: number | null, b: number | null): number | null {
+  if (a === null) return b
+  if (b === null) return a
+  return a + b
+}
+
+function readNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? Math.round(value) : null
 }
 
 function parseJson(value: string): unknown {

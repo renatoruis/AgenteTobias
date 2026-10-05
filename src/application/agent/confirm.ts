@@ -5,7 +5,6 @@ import {
   eventsForMessage,
   findAlias,
   indexFact,
-  insertReminder,
   loadMessage,
   retireFact,
   saveResult,
@@ -13,41 +12,26 @@ import {
   writeFact,
 } from "./sql"
 
-export type ProposalDraft =
-  | {
-      kind: "event"
-      savedReply: string
-      type: EventType
-      occurredAt: string
-      visibility: Visibility
-      version: number
-      amountMinor: number | null
-      currency: string | null
-      warrantyEndsOn: string | null
-      dataJson: string
-      supersedesEventId: string | null
-      summary: string
-      entity:
-        | { mode: "link"; id: string; role: string }
-        | { mode: "create"; kind: string; name: string; normalized: string; role: string }
-        | null
-      reminder: { title: string; dueAt: string; audience: "household" | "adults" } | null
-    }
-  | {
-      kind: "reminder"
-      savedReply: string
-      title: string
-      dueAt: string
-      audience: "household" | "adults"
-      eventId: string | null
-    }
-  | {
-      kind: "entity"
-      savedReply: string
-      entityKind: string
-      name: string
-      normalized: string
-    }
+/** A `remember` above the confirmation threshold, waiting for a yes. */
+export type ProposalDraft = {
+  kind: "event"
+  savedReply: string
+  type: EventType
+  occurredAt: string
+  visibility: Visibility
+  version: number
+  amountMinor: number | null
+  currency: string | null
+  warrantyEndsOn: string | null
+  dataJson: string
+  supersedesEventId: string | null
+  summary: string
+  entity:
+    | { mode: "link"; id: string; role: string }
+    | { mode: "create"; kind: string; name: string; normalized: string; role: string }
+    | null
+  reminder: { title: string; dueAt: string; audience: "household" | "adults" } | null
+}
 
 type StoredBody = MessageResponse & { draft?: ProposalDraft }
 
@@ -85,46 +69,24 @@ export async function confirmMessage(
   return response
 }
 
-async function writeDraft(
+export async function writeDraft(
   db: D1Database,
   session: Session,
   messageId: string,
   draft: ProposalDraft,
 ): Promise<EventSummary[]> {
-  if (draft.kind === "reminder") {
-    await insertReminder(db, {
-      householdId: session.householdId,
-      eventId: draft.eventId,
-      title: draft.title,
-      dueAt: draft.dueAt,
-      audience: draft.audience,
-    })
-    return []
-  }
-
-  if (draft.kind === "entity") {
-    const existing = await findAlias(db, session.householdId, draft.normalized)
-    if (!existing) {
-      try {
-        await createEntity(db, session.householdId, draft.entityKind, draft.name, draft.normalized)
-      } catch {
-        await findAlias(db, session.householdId, draft.normalized)
-      }
-    }
-    return []
-  }
-
   let entityId: string | null = null
   let entityRole: string | null = null
   if (draft.entity?.mode === "link") {
     entityId = draft.entity.id
     entityRole = draft.entity.role
   } else if (draft.entity?.mode === "create") {
-    const existing = await findAlias(db, session.householdId, draft.entity.normalized)
+    const wanted = draft.entity
+    const existing = await findAlias(db, session.householdId, wanted.normalized)
     const created =
       existing ??
-      (await createEntity(db, session.householdId, draft.entity.kind, draft.entity.name, draft.entity.normalized).catch(
-        async () => findAlias(db, session.householdId, draft.entity && draft.entity.mode === "create" ? draft.entity.normalized : ""),
+      (await createEntity(db, session.householdId, wanted.kind, wanted.name, wanted.normalized).catch(() =>
+        findAlias(db, session.householdId, wanted.normalized),
       ))
     if (created) {
       entityId = created.id
@@ -172,7 +134,6 @@ function decided(messageId: string, conversationId: string, reply: string, event
     status: "interpreted",
     reply,
     events,
-    clarification: null,
     idempotent: false,
   }
 }
@@ -192,13 +153,9 @@ function publicResponse(stored: StoredBody, messageId: string, conversationId: s
   return {
     messageId,
     conversationId,
-    status:
-      stored.status === "clarification" || stored.status === "stored" || stored.status === "proposal"
-        ? stored.status
-        : "interpreted",
+    status: stored.status === "stored" || stored.status === "proposal" ? stored.status : "interpreted",
     reply: stored.reply,
     events: Array.isArray(stored.events) ? stored.events : [],
-    clarification: stored.clarification ?? null,
     idempotent: true,
   }
 }

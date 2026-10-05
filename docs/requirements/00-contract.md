@@ -2,7 +2,7 @@
 
 Este ficheiro é a interface entre pacotes. Um agent que precise de um campo que não está aqui para e regista a falta. Não o inventa no código.
 
-Host: `https://tobias.timdevops.com.br`. A PWA e a API são a mesma origem. Não há CORS para outros origins.
+Host: `https://tobias.timdevops.com.br`. A app iOS fala com este host. Não há CORS para outros origins.
 
 ## Bindings e variáveis
 
@@ -13,18 +13,22 @@ Host: `https://tobias.timdevops.com.br`. A PWA e a API são a mesma origem. Não
 | `VECTORS` | Vectorize | índice `agentetobias-events`, 1024, cosine |
 | `AI` | Workers AI | — |
 | `AI_GATEWAY_ID` | var | `agentetobias` |
-| `AI_INTERPRET_MODEL` | var | `@cf/qwen/qwen3-30b-a3b-fp8` |
+| `AI_INTERPRET_MODEL` | var | `openai/gpt-5-mini` (modelo de terceiros pelo binding `AI`, Unified Billing) |
+| `AI_FALLBACK_MODEL` | var | `google-ai-studio/gemini-2.5-flash-lite`. Uma tentativa se o principal falhar. Vazio desliga o fallback |
 | `AI_STT_MODEL` | var | `@cf/openai/whisper-large-v3-turbo` |
 | `AI_EMBED_MODEL` | var | `@cf/baai/bge-m3` |
-| `EMBEDDINGS` | var | `"0"` no corte 1, `"1"` no corte 2 |
+| `EMBEDDINGS` | var | `"0"`. Vectorize desligado até haver uma pergunta real que o FTS não encontre |
+| `CONFIRM_ABOVE_MINOR` | var | `"50000"`. Acima disto `remember` propõe em vez de gravar |
 | `BOOTSTRAP_TOKEN` | secret | só no Worker |
 | `PIN_PEPPER` | secret | só no Worker |
 
-Chamadas ao Workers AI passam pelo gateway:
+Chamadas a modelos, Cloudflare ou de terceiros, passam pelo gateway com o mesmo binding:
 
 ```ts
 env.AI.run(model, inputs, { gateway: { id: env.AI_GATEWAY_ID } })
 ```
+
+Modelos `author/model` (sem `@cf/`) são de terceiros e pagam-se pelo crédito Unified Billing do gateway. Nenhuma chave de provedor entra no Worker.
 
 ## Tipos
 
@@ -44,6 +48,7 @@ export type EventType =
   | "note"
   | "incident"
   | "reminder"
+  | "income"
 
 export type Session = {
   userId: string
@@ -67,13 +72,14 @@ export type EventSummary = {
 export type MessageResponse = {
   messageId: string
   conversationId: string
-  status: "interpreted" | "stored" | "clarification" | "proposal"
+  status: "interpreted" | "stored" | "proposal"
   reply: string
   events: EventSummary[]
-  clarification: { question: string } | null
   idempotent: boolean
 }
 ```
+
+`events` lista os eventos que esta mensagem gravou ou anulou. Uma pergunta do Tobias é `interpreted` com `events: []`.
 
 Ids são UUID v4. `occurredAt` e `dueAt` são ISO 8601 em UTC. O dia civil mostra-se em `Europe/Lisbon`.
 
@@ -111,7 +117,7 @@ Cookie `tobias_session`. Valor: id opaco da linha `sessions`. Atributos: `HttpOn
 
 ## Rotas
 
-Todas sob `/api`. Fora de `/api`, o Worker serve a PWA.
+Todas sob `/api`. `GET /` responde uma página estática curta. `GET /.well-known/apple-app-site-association` publica a associação da app. O resto fora de `/api` é 404.
 
 ### Auth
 
@@ -124,6 +130,14 @@ Todas sob `/api`. Fora de `/api`, o Worker serve a PWA.
 | POST | `/api/auth/login` | não | 1 |
 | POST | `/api/auth/logout` | sim | 1 |
 | GET | `/api/me` | sim | 1 |
+| PATCH | `/api/me` | sim | 1 |
+| GET | `/api/users` | sim | 1 |
+| GET | `/api/me/preferences` | sim | 1 |
+| PUT | `/api/me/preferences` | sim | 1 |
+| GET | `/api/sessions` | sim | 1 |
+| POST | `/api/sessions/:id/revoke` | sim | 1 |
+| PUT | `/api/devices/current/push` | sim | 1 |
+| PATCH | `/api/household` | owner | 1 |
 | POST | `/api/invites` | owner | 2 |
 | POST | `/api/kiosk/unlock` | dispositivo kiosk já registado | 2 |
 
@@ -156,11 +170,11 @@ Repetir o mesmo `clientMessageId` no mesmo household devolve a resposta guardada
 
 `correctsEventId` marca o evento anterior `superseded` e liga o novo. Só se o evento for deste household e `active`.
 
-`status: "stored"` significa texto guardado e interpretação adiada. `reply` é `Guardado, ainda por interpretar.`
+`status: "interpreted"` é o caso normal: o Tobias respondeu. `reply` é texto do modelo. Se gravou, `events` traz o que gravou e a app mostra Desfazer e Editar. Se perguntou, `events` vem vazio.
 
-`status: "clarification"` não cria evento. `reply` é a única pergunta.
+`status: "stored"` significa que o modelo principal e o fallback falharam. O texto fica guardado. `reply` é `Guardado, ainda por interpretar.`
 
-`status: "proposal"` também não cria evento. `reply` é «Entendi: …. Gravo?». O rascunho fica em `result_json` e não volta no JSON da resposta.
+`status: "proposal"` não cria evento. Só acontece quando o valor passa `CONFIRM_ABOVE_MINOR`. `reply` é «Entendi: …. Gravo?». O rascunho fica em `result_json` e não volta no JSON da resposta.
 
 `POST /api/messages/:id/confirm` — corte 1. Corpo `{ "accept": true | false }`. `true` grava o rascunho e devolve `interpreted`. `false` devolve `Não gravei.` Sem segunda chamada ao modelo. O cliente não reenvia o rascunho.
 
@@ -196,6 +210,42 @@ Perguntas de data e hora («que dia é hoje», «que dia da semana», «que hora
 
 `child` não recebe `audience: "adults"`. Ordenação: `due_at` ascendente. `status=open` é o default.
 
+`POST /api/reminders/:id/done` — marca `done` se o lembrete está `open` e a sessão o pode ver. Resposta `{ "id", "status": "done" }`. Se não estiver visível, 404.
+
+### Conta, preferências e avisos
+
+`PATCH /api/me` com `{ "displayName" }` devolve o corpo de `GET /api/me`.
+
+`PATCH /api/household` com `{ "name" }`, só owner, devolve o objeto `household` de `GET /api/me`.
+
+`GET /api/users`:
+
+```json
+{ "users": [{ "id": "…", "displayName": "Renato", "role": "owner" }] }
+```
+
+`GET /api/me/preferences` e `PUT /api/me/preferences`. O PUT substitui o documento inteiro. Sem linha gravada, o GET devolve estes defaults:
+
+```json
+{
+  "appearance": { "theme": "system", "accent": "teal" },
+  "voice": { "speakReplies": false, "rate": 0.5 },
+  "notifications": { "reminders": true, "sound": true, "badge": true, "quietHours": null }
+}
+```
+
+`theme`: `system` | `light` | `dark`. `accent`: `teal` | `blue` | `green` | `orange`. `rate`: número de 0 a 1. `quietHours`: `null` ou `{ "start": "22:00", "end": "08:00" }` em `HH:mm`, horas diferentes.
+
+`GET /api/sessions`:
+
+```json
+{ "sessions": [{ "id": "…", "deviceName": "telemóvel", "current": true }] }
+```
+
+O owner vê as sessões ativas da casa. Os outros vêem as suas. `POST /api/sessions/:id/revoke` responde 204. A pessoa revoga as suas. O owner revoga qualquer uma da casa. Outra casa, ou já revogada: 404.
+
+`PUT /api/devices/current/push` com `{ "token", "environment": "sandbox" | "production" }`. `token` é o device token APNs em hexadecimal, 64 caracteres. Resposta 204. O aparelho é o `device_id` da sessão.
+
 ### Voz
 
 `POST /api/speech` — corte 2. `multipart/form-data` com o campo `audio` (`audio/mp4`, até 60 s, até 8 MB) e o campo `clientMessageId`.
@@ -208,7 +258,7 @@ Não grava mensagem nem evento. O cliente mostra o texto e chama `POST /api/mess
 
 ### Ficheiros
 
-`POST /api/files` — corte 2. Multipart, campo `file`. JPEG, PNG, WebP ou PDF. Até 10 MB.
+`POST /api/files` — corte 2. Multipart, campo `file`. JPEG, PNG, WebP ou PDF. Até 10 MB. Campo opcional `conversationId`: liga o ficheiro ao evento activo mais recente dessa conversa.
 
 ```json
 { "fileId": "…", "mime": "image/jpeg", "bytes": 120034 }
@@ -233,46 +283,45 @@ O SQL completo está em [03-database.md](03-database.md). Nomes e colunas que o 
 - `aliases`: `id`, `household_id`, `entity_id`, `normalized`
 - `event_entities`: `event_id`, `entity_id`, `role`
 - `reminders`: `id`, `household_id`, `event_id`, `title`, `due_at`, `audience`, `status`
+- `user_preferences`: `user_id`, `theme`, `accent`, `speak_replies`, `speech_rate`, `notify_reminders`, `notify_sound`, `notify_badge`, `quiet_start`, `quiet_end`
+- `push_tokens`: `id`, `device_id`, `user_id`, `token`, `environment` (`sandbox` | `production`), `updated_at`
+- `reminder_deliveries`: `reminder_id`, `user_id`, `sent_at`
 - `files`: `id`, `household_id`, `event_id`, `r2_key`, `mime`, `bytes`, `sha256`, `created_by`
 - `embedding_jobs`: `event_id`, `status` (`pending` \| `ready` \| `failed`), `vector_id`, `text_hash`
 - `usage`: `id`, `trace_id`, `message_id`, `tool`, `model`, `tokens_in`, `tokens_out`, `latency_ms`, `error_code`, `created_at`
 
-Único: `messages (household_id, client_message_id)` e `aliases (household_id, normalized)`.
+Único: `messages (household_id, client_message_id)`, `aliases (household_id, normalized)`, `push_tokens (device_id, user_id)` e `reminder_deliveries (reminder_id, user_id)`.
 
 `result_json` em `messages` guarda o `MessageResponse` da primeira interpretação, para o retry idempotente.
 
 ## Tools do modelo
 
-O modelo só pode pedir estas tools. Os schemas Zod vivem em `src/domain/tools.ts`.
+O modelo só pode pedir estas tools. Os schemas Zod vivem em `src/domain/tools.ts`. `householdId` e `actorId` vêm da sessão; qualquer valor que o modelo mande é descartado. O resultado de cada tool volta ao modelo como JSON; o modelo escreve a frase final.
 
-| Tool | Campos obrigatórios | Efeito |
+| Tool | Campos | Efeito |
 | --- | --- | --- |
-| `record_event` | `type`, `occurredAt`, `visibility` | Cria evento se o schema do tipo passar |
-| `resolve_or_create_entity` | `kind`, `name` | Devolve id existente se o alias normalizado já existe |
-| `ask_clarification` | `question` | Zero escritas |
-| `search_events` | nenhum, filtros opcionais | Lê. Não chama outro modelo |
-| `search_text` | `query` | FTS e, se `EMBEDDINGS=1`, vetores |
-| `void_event` | `eventId` | Anula |
-| `create_reminder` | `title`, `dueAt`, `audience` | Cria lembrete |
-| `attach_file` | `fileId` | Liga um ficheiro já enviado |
+| `remember` | `text`, `type`; opcionais `occurredAt`, `amountMinor`, `entities[]` (`name`, `kind`), `visibility`, `remindAt`, `warrantyMonths`, `place`, `details` | Grava um evento. Acima de `CONFIRM_ABOVE_MINOR` devolve proposta em vez de gravar |
+| `recall` | opcionais `query`, `type`, `entity`, `from`, `to`, `limit` | Lê. FTS5 sobre o texto mais filtros. Até 12 linhas |
+| `total` | opcionais `type` (default `expense`), `entity`, `from`, `to` (default mês civil corrente) | `SUM(amount_minor)` em SQL dos eventos `active` visíveis |
+| `amend` | `eventId` mais os campos de `remember` a alterar | Nova versão; o anterior fica `superseded` |
+| `void` | `eventId` | Anula |
 
-`record_event` por tipo:
+Regras de `remember` por tipo, verificadas no servidor:
 
-| type | Obrigatório em `data` | Opcional, pode faltar |
+| type | Obrigatório | Nota |
 | --- | --- | --- |
-| `expense` | `amountMinor`, `currency` | merchant, note |
-| `purchase` | nenhum | `amountMinor`, `currency`, product |
-| `vehicle.fuel` | `entityId` de um veículo | litros, km, posto, `amountMinor` |
-| `vehicle.maintenance` | `entityId` de um veículo | `amountMinor`, note |
-| `warranty` | `warrantyMonths` (inteiro), `entityId` | `amountMinor` |
-| `object.location` | `entityId`, `place` | note |
-| `note` | `text` | — |
-| `incident` | `text` | — |
-| `reminder` | `title`, `dueAt` | — |
+| `expense` | `amountMinor` | entidade `merchant` se vier |
+| `income` | `amountMinor` | venda, salário, reembolso; `text` diz o quê |
+| `purchase` | — | `warrantyMonths` cria garantia e lembrete |
+| `vehicle.fuel`, `vehicle.maintenance` | um veículo | sem `entities`: se a casa tem um veículo usa-o; com dois ou mais a tool devolve `ambiguous_vehicle` com os nomes |
+| `warranty` | `warrantyMonths`, uma entidade | |
+| `object.location` | `place`, uma entidade | |
+| `note`, `incident` | `text` | |
+| `reminder` | `remindAt` | `text` é o título |
 
-`currency`, quando vem, é `EUR`. Outra moeda é `validation` e vira pergunta, não gravação.
+`amountMinor` aceita inteiro em cêntimos ou texto (`"80 euros"`, `"70,50"`) que passa por `parseEur`. Outra moeda é erro de validação. `occurredAt` e `remindAt` aceitam `hoje`, `ontem`, `sábado`, ou ISO 8601. `warrantyEndsOn` é calculado em `src/domain/warranty.ts`.
 
-`warrantyEndsOn` é calculado em `src/domain/warranty.ts` com calendário de Lisboa: data de compra mais `warrantyMonths`. O modelo não envia a data de fim.
+Um erro de tool devolve `{ "error": "<código>", ... }` ao modelo, nunca grava, e o modelo pergunta em texto. Códigos: `validation`, `missing_amount`, `ambiguous_vehicle`, `no_vehicle`, `missing_place`, `missing_months`, `not_found`, `forbidden`.
 
 Visibilidade por defeito: `household`. `child` não pode criar `adults` nem `private` de outra pessoa. `private` fica com o ator.
 
@@ -311,28 +360,22 @@ export function registerFiles(app: Hono<AppEnv>): void
 O pacote platform instala, e mais ninguém mexe no `package.json`:
 
 - `hono`, `zod`, `drizzle-orm`
-- `react`, `react-dom`, `vite`
 - `wrangler`, `typescript`
-- `@simplewebauthn/server`, `@simplewebauthn/browser`
+- `@simplewebauthn/server`
 - `vitest` em devDependencies
 
-Sem biblioteca de UI. Sem ORM além de Drizzle. Sem cliente HTTP no browser além de `fetch`.
+Sem biblioteca de UI no Worker. Sem ORM além de Drizzle. A app iOS não acrescenta dependências a este `package.json`.
 
 ## Frases de confirmação
 
-O pacote domain monta `summary` e `reply` em código, a partir do evento gravado, não a partir do texto livre do modelo.
+A frase que a família lê é do modelo, em português, na variante de quem fala, curta. As frases abaixo são o que o código produz sem modelo:
 
 | Situação | reply |
 | --- | --- |
-| Despesa | `Registrei €80 no Continente.` Se o dia não for hoje, a data civil entra na frase. |
-| Nota | `Nota: «Hoje fizemos o cadastro no app.», 5 de outubro de 2026.` |
-| Antes de gravar | `Entendi: €80 no Continente. Gravo?` |
+| Proposta acima do limiar | `Entendi: €600 no Numa X Piano 73. Gravo?` |
+| Confirmação pelo botão ou «sim» | `Registrei €600 no Numa X Piano 73.` (de `reply.ts`) |
+| «não» ou botão Não | `Não gravei.` |
 | Data | `Hoje é segunda-feira, 5 de outubro de 2026.` |
-| Combustível | `Registrei €70 de combustível no i30.` |
-| Compra com garantia | `Registrei a air fryer, garantia até 5 de outubro de 2028.` |
-| Clarificação de veículo | `Foi o i30 ou o Aveo?` |
-| Modelo em baixo | `Guardado, ainda por interpretar.` |
-| Soma | `€80 este mês.` — o número vem do SQL |
-| Soma vazia | `Não há despesas do Continente este mês.` |
+| Principal e fallback em baixo | `Guardado, ainda por interpretar.` |
 
-Formato de dinheiro em pt-PT: `€` e vírgula decimal (`€70,50`). O inteiro interno continua em cêntimos.
+Formato de dinheiro em pt-PT: `€` e vírgula decimal (`€70,50`). O inteiro interno continua em cêntimos. `summary` de cada evento é montado em código a partir dos campos gravados, não do texto livre do modelo.

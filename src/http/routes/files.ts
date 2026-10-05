@@ -1,4 +1,5 @@
 import type { Hono } from "hono"
+import { latestEventId } from "../../application/agent/sql"
 import { readSession } from "../../application/auth/session"
 import { canRead } from "../../domain/access"
 import type { Session, Visibility } from "../../domain/types"
@@ -67,12 +68,18 @@ async function postFile(env: Env, request: Request): Promise<Response> {
     return error(503, "unavailable", "Não consegui guardar o ficheiro.")
   }
 
+  const conversationId = form.get("conversationId")
+  const eventId =
+    typeof conversationId === "string" && conversationId.trim() !== ""
+      ? await latestEventId(env.DB, session.householdId, conversationId.trim())
+      : null
+
   try {
     await env.DB.prepare(
       `INSERT INTO files (id, household_id, event_id, r2_key, mime, bytes, sha256, created_by)
-       VALUES (?, ?, NULL, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-      .bind(fileId, session.householdId, key, mime, bytes.byteLength, sha256, session.userId)
+      .bind(fileId, session.householdId, eventId, key, mime, bytes.byteLength, sha256, session.userId)
       .run()
   } catch {
     try {
@@ -83,7 +90,7 @@ async function postFile(env: Env, request: Request): Promise<Response> {
     return error(503, "unavailable", "Não consegui guardar o ficheiro.")
   }
 
-  return Response.json({ fileId, mime, bytes: bytes.byteLength })
+  return Response.json({ fileId, mime, bytes: bytes.byteLength, eventId })
 }
 
 async function getFileUrl(env: Env, request: Request, fileId: string): Promise<Response> {

@@ -3,7 +3,8 @@ import { Hono } from "hono"
 import { createEntity } from "../../application/agent/sql"
 import { CODE_SECONDS, generateCode, hashCode } from "../../application/auth/codes"
 import { expiresAt, readSession } from "../../application/auth/session"
-import { createInvite, hasHousehold } from "../../application/auth/store"
+import { renameHousehold } from "../../application/auth/account"
+import { createInvite, hasHousehold, loadMe } from "../../application/auth/store"
 import { normalizeAlias } from "../../domain/alias"
 import type { Role } from "../../domain/types"
 import type { AppEnv } from "../app"
@@ -19,6 +20,7 @@ const EXISTS = "Esse nome já existe."
 export function registerHousehold(app: Hono<HouseholdEnv>): void {
   app.get("/api/setup", (c) => setup(c))
   app.get("/api/household", (c) => household(c))
+  app.patch("/api/household", (c) => patchHousehold(c))
   app.post("/api/household/members", (c) => addMember(c))
   app.post("/api/household/vehicles", (c) => addVehicle(c))
 }
@@ -52,6 +54,20 @@ async function household(c: Context<HouseholdEnv>) {
     })),
     vehicles: vehicles.results,
   })
+}
+
+async function patchHousehold(c: Context<HouseholdEnv>) {
+  const session = await requireSession(c)
+  if (session instanceof Response) return session
+  if (session.role !== "owner") return fail(c, 403, "forbidden", FORBIDDEN)
+  const body = await readJson(c)
+  const name = readName(body?.name)
+  if (!name) return fail(c, 400, "validation", INVALID)
+  const renamed = await renameHousehold(c.env.DB, session.householdId, name)
+  if (!renamed) return fail(c, 404, "not_found", "Não encontrado.")
+  const profile = await loadMe(c.env.DB, session.userId, session.householdId)
+  if (!profile) return fail(c, 401, "unauthorized", UNAUTHORIZED)
+  return c.json(profile.household)
 }
 
 async function addMember(c: Context<HouseholdEnv>) {
@@ -138,8 +154,8 @@ async function readJson(c: Context<HouseholdEnv>): Promise<Record<string, unknow
 
 function fail(
   c: Context,
-  status: 400 | 401 | 403 | 503,
-  code: "validation" | "unauthorized" | "forbidden" | "unavailable",
+  status: 400 | 401 | 403 | 404 | 503,
+  code: "validation" | "unauthorized" | "forbidden" | "not_found" | "unavailable",
   message: string,
 ) {
   return c.json({ error: { code, message } }, status)

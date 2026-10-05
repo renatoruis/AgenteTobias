@@ -1,6 +1,6 @@
 # Pacote platform
 
-Dono de `package.json`, `tsconfig.json`, `wrangler.jsonc`, `src/env.ts`, `src/http/index.ts`, `src/http/app.ts`, `index.html` na raiz se o Vite o exigir.
+Dono de `package.json`, `tsconfig.json`, `wrangler.jsonc`, `src/env.ts`, `src/http/index.ts`, `src/http/app.ts`.
 
 Não implementa auth, interpretação, SQL de negócio, nem ecrãs. Liga as rotas que os outros pacotes exportam.
 
@@ -12,11 +12,6 @@ Não implementa auth, interpretação, SQL de negócio, nem ecrãs. Liga as rota
   "name": "agentetobias",
   "main": "src/http/index.ts",
   "compatibility_date": "2026-10-05",
-  "assets": {
-    "directory": "./dist/client",
-    "not_found_handling": "single-page-application",
-    "binding": "ASSETS"
-  },
   "routes": [
     { "pattern": "tobias.timdevops.com.br", "custom_domain": true }
   ],
@@ -34,20 +29,23 @@ Não implementa auth, interpretação, SQL de negócio, nem ecrãs. Liga as rota
     { "binding": "VECTORS", "index_name": "agentetobias-events" }
   ],
   "ai": { "binding": "AI" },
-  "triggers": { "crons": ["15 * * * *"] },
+  "triggers": { "crons": ["15 * * * *", "*/5 * * * *"] },
   "vars": {
     "AI_GATEWAY_ID": "agentetobias",
-    "AI_INTERPRET_MODEL": "@cf/qwen/qwen3-30b-a3b-fp8",
+    "AI_INTERPRET_MODEL": "openai/gpt-5-mini",
+    "AI_FALLBACK_MODEL": "google-ai-studio/gemini-2.5-flash-lite",
     "AI_STT_MODEL": "@cf/openai/whisper-large-v3-turbo",
     "AI_EMBED_MODEL": "@cf/baai/bge-m3",
-    "EMBEDDINGS": "0"
+    "EMBEDDINGS": "0",
+    "CONFIRM_ABOVE_MINOR": "50000",
+    "APNS_BUNDLE_ID": "br.com.timdevops.tobias"
   }
 }
 ```
 
-`src/env.ts` exporta `Env` com estes bindings e vars, mais `BOOTSTRAP_TOKEN` e `PIN_PEPPER` como `string`.
+`src/env.ts` exporta `Env` com estes bindings e vars, mais `BOOTSTRAP_TOKEN` e `PIN_PEPPER` como `string`. `APNS_TEAM_ID`, `APNS_KEY_ID` e `APNS_AUTH_KEY` são opcionais até os segredos existirem.
 
-O cron chama `embedPending` de `src/infrastructure/search.ts`. Se o ficheiro ainda não existir no momento do primeiro `wrangler dev`, o handler do cron regista o erro e responde 200 para o cron não entrar em retry infinito. Quando o pacote search existir, a chamada é direta.
+O cron `15 * * * *` chama `embedPending` de `src/infrastructure/search.ts`. O cron `*/5 * * * *` chama `dispatchDueReminders`. Se o ficheiro ainda não existir no momento do primeiro `wrangler dev`, o handler do cron regista o erro e não entra em retry infinito.
 
 ## HTTP
 
@@ -56,7 +54,9 @@ O cron chama `embedPending` de `src/infrastructure/search.ts`. Se o ficheiro ain
 - `trace_id` por pedido (UUID), header de resposta `x-trace-id`;
 - cookie parser mínimo, sem dependência extra se o Hono já o trouxer;
 - rotas `/api/*` via `registerAuth`, `registerMessages`, `registerEvents`, `registerReminders`, `registerSpeech`, `registerFiles`;
-- qualquer outro GET cai nos assets.
+- `GET /` devolve a página estática;
+- `GET /.well-known/apple-app-site-association` devolve o JSON da app;
+- qualquer outro caminho é 404.
 
 Erros não tratados: `{ error: { code: "unavailable", message: "Falhou. Tenta outra vez." } }` com 500, e log só com `trace_id` e o nome do erro. Sem body do pedido no log.
 
@@ -69,7 +69,7 @@ Cabeçalhos de segurança na resposta HTML e na API: `X-Content-Type-Options: no
 - `dev` — `wrangler dev`
 - `typecheck` — `tsc --noEmit`
 - `test` — `vitest run`
-- `build` — build do Vite para `dist/client` e depois o Worker está pronto para deploy
+- `build` — `tsc --noEmit`. O Worker não tem assets de cliente.
 
 Não correr `wrangler deploy` neste pacote sem pedido. `wrangler dev` sim.
 

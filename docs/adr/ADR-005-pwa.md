@@ -1,5 +1,7 @@
 # ADR-005 — PWA em vez de aplicação nativa
 
+Substituído por [ADR-011](ADR-011-ios-app.md). O texto abaixo fica como registo da decisão anterior.
+
 ## Context
 
 O uso é iPhone, iPad fixo em casa, Mac e browser. Não há distribuição na App Store no início. A prioridade é simplicidade, custo baixo, pouca manutenção e uma experiência próxima de uma app, instalável no ecrã principal, com Safari.

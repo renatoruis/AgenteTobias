@@ -37,4 +37,23 @@ export function registerReminders(app: Hono<AppEnv>): void {
 
     return c.json({ reminders })
   })
+
+  app.post("/api/reminders/:id/done", async (c) => {
+    const session = await readSession(c.env.DB, c.req.header("cookie") ?? null, new Date())
+    if (!session) {
+      return c.json({ error: { code: "unauthorized", message: "Sessão em falta." } }, 401)
+    }
+    const seesAdults = readScope(session.role).visibilities.includes("adults")
+    const result = await c.env.DB.prepare(
+      `UPDATE reminders SET status = 'done'
+       WHERE id = ? AND household_id = ? AND status = 'open'
+         AND (audience = 'household' OR ? = 1)`,
+    )
+      .bind(c.req.param("id"), session.householdId, seesAdults ? 1 : 0)
+      .run()
+    if ((result.meta.changes ?? 0) === 0) {
+      return c.json({ error: { code: "not_found", message: "Não encontrado." } }, 404)
+    }
+    return c.json({ id: c.req.param("id"), status: "done" })
+  })
 }

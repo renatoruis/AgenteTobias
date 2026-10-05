@@ -63,6 +63,12 @@ export function replyFor(event: ReplyEvent): string {
     return withDay("Registrei a compra.", event)
   }
 
+  if (event.type === "income") {
+    if (money && name) return withDay(`Registrei ${money} recebidos, ${name}.`, event)
+    if (money) return withDay(`Registrei ${money} recebidos.`, event)
+    return withDay("Registrei a receita.", event)
+  }
+
   if (event.type === "vehicle.maintenance") {
     if (money && name) return withDay(`Registrei ${money} de manutenção no ${name}.`, event)
     if (name) return withDay(`Registrei a manutenção no ${name}.`, event)
@@ -138,6 +144,12 @@ export function summaryFor(event: ReplyEvent): string {
   if (event.type === "purchase") {
     if (money && name) return `${money} na ${name}`
     return name ?? "Compra"
+  }
+
+  if (event.type === "income") {
+    if (money && name) return `${money} recebidos, ${name}`
+    if (money) return `${money} recebidos`
+    return name ?? "Receita"
   }
 
   if (event.type === "vehicle.maintenance") {

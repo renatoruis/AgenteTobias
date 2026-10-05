@@ -37,7 +37,7 @@ Filtro de metadata do Vectorize não substitui `canRead`. Os dois correm.
 
 ## Cron
 
-O platform chama `embedPending(env, 20)` no cron `15 * * * *`. Esta função não assume o relógio: também pode ser chamada no `waitUntil` depois de `record_event`. O pacote agent pode chamar `waitUntil(embedPending(env, 5))` se `EMBEDDINGS` for `1`. Se for `0`, não chama.
+O platform chama `embedPending(env, 20)` no cron `15 * * * *`. Esta função não assume o relógio: também pode ser chamada no `waitUntil` depois de `remember`. O pacote agent pode chamar `waitUntil(embedPending(env, 5))` se `EMBEDDINGS` for `1`. Se for `0`, não chama.
 
 ## Aceitação
 

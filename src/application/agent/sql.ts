@@ -1,10 +1,12 @@
 import { and, eq, inArray, or, type SQL } from "drizzle-orm"
 import { canRead, canVoid, readScope } from "../../domain/access"
+import { startOfCivilDay } from "../../domain/dates"
 import type { EventSummary, EventType, Session, Visibility } from "../../domain/types"
 import type { Env } from "../../env"
 import { events } from "../../infrastructure/d1/schema"
 import { deleteIfOrphan } from "../../infrastructure/r2"
 import { indexEvent } from "../../infrastructure/search"
+import { CARD_ENTITY_LIMIT, TIME_ZONE, TODAY_LIMIT, type HouseholdCard, type Turn } from "./context"
 import { AgentError } from "./errors"
 
 /** Drizzle's D1 driver reads rows with `raw()`. The test double only has `all()`. */
@@ -102,30 +104,18 @@ export async function dropConversation(db: D1Database, householdId: string, id: 
     .run()
 }
 
-export async function activeAliases(db: D1Database, householdId: string): Promise<EntityHit[]> {
-  const listed = await db
-    .prepare(
-      `SELECT e.id AS id, e.name AS name, e.kind AS kind, a.normalized AS normalized
-       FROM aliases a
-       JOIN entities e ON e.id = a.entity_id
-       WHERE a.household_id = ? AND e.household_id = ? AND e.status = 'active'`,
-    )
-    .bind(householdId, householdId)
-    .all<EntityHit>()
-  return listed.results
-}
-
+/** Previous turns of this conversation: who spoke, what they said, and what Tobias replied. */
 export async function recentTurns(
   db: D1Database,
   session: Session,
   conversationId: string,
   skipMessageId: string,
   limit: number,
-): Promise<Array<{ role: string; text: string }>> {
+): Promise<Turn[]> {
   const listed = await db
     .prepare(
-      `SELECT m.id AS id, m.text AS text, m.created_at AS created_at, u.role AS role,
-              e.visibility AS visibility, e.actor_id AS actor_id
+      `SELECT m.id AS id, m.text AS text, m.created_at AS created_at, m.result_json AS result_json,
+              u.display_name AS speaker, e.visibility AS visibility, e.actor_id AS actor_id
        FROM messages m
        JOIN users u ON u.id = m.actor_id
        LEFT JOIN events e ON e.message_id = m.id AND e.household_id = m.household_id
@@ -138,15 +128,21 @@ export async function recentTurns(
       id: string
       text: string
       created_at: string
-      role: string
+      result_json: string | null
+      speaker: string
       visibility: string | null
       actor_id: string | null
     }>()
 
-  const grouped = new Map<string, { role: string; text: string; hidden: boolean }>()
+  const grouped = new Map<string, Turn & { hidden: boolean }>()
   const order: string[] = []
   for (const row of listed.results) {
-    const current = grouped.get(row.id) ?? { role: row.role, text: row.text, hidden: false }
+    const current = grouped.get(row.id) ?? {
+      speaker: row.speaker,
+      text: row.text,
+      reply: replyFromResult(row.result_json),
+      hidden: false,
+    }
     if (!grouped.has(row.id)) order.push(row.id)
     if (row.visibility && isVisibility(row.visibility)) {
       const actorId = row.actor_id ?? ""
@@ -155,14 +151,94 @@ export async function recentTurns(
     grouped.set(row.id, current)
   }
 
-  const turns: Array<{ role: string; text: string }> = []
+  const turns: Turn[] = []
   for (const id of order) {
     if (turns.length >= limit) break
     const item = grouped.get(id)
     if (!item || item.hidden) continue
-    turns.push({ role: item.role, text: item.text })
+    turns.push({ speaker: item.speaker, text: item.text, reply: item.reply })
   }
   return turns.reverse()
+}
+
+export async function householdCard(db: D1Database, session: Session): Promise<HouseholdCard> {
+  const household = await db
+    .prepare("SELECT name FROM households WHERE id = ?")
+    .bind(session.householdId)
+    .first<{ name: string }>()
+  const members = await db
+    .prepare("SELECT display_name AS name, role FROM users WHERE household_id = ? ORDER BY created_at")
+    .bind(session.householdId)
+    .all<{ name: string; role: string }>()
+  const entities = await db
+    .prepare(
+      `SELECT name, kind FROM entities
+       WHERE household_id = ? AND status = 'active'
+       ORDER BY kind, name
+       LIMIT ?`,
+    )
+    .bind(session.householdId, CARD_ENTITY_LIMIT)
+    .all<{ name: string; kind: string }>()
+  return {
+    name: household?.name ?? "Casa",
+    members: members.results,
+    entities: entities.results,
+  }
+}
+
+export async function speakerName(db: D1Database, session: Session): Promise<string> {
+  const row = await db
+    .prepare("SELECT display_name AS name FROM users WHERE id = ? AND household_id = ?")
+    .bind(session.userId, session.householdId)
+    .first<{ name: string }>()
+  return row?.name ?? "alguém"
+}
+
+/** Active events of today's civil day in Lisbon, visible to this speaker. */
+export async function todayEvents(db: D1Database, session: Session, now: Date): Promise<EventSummary[]> {
+  const from = startOfCivilDay(now, TIME_ZONE)
+  const to = new Date(from.getTime() + 24 * 60 * 60 * 1000)
+  const listed = await db
+    .prepare(
+      `SELECT id, type, occurred_at, amount_minor, currency, summary, warranty_ends_on, visibility, actor_id
+       FROM events
+       WHERE household_id = ? AND status = 'active' AND occurred_at >= ? AND occurred_at < ?
+       ORDER BY occurred_at DESC
+       LIMIT ?`,
+    )
+    .bind(session.householdId, from.toISOString(), to.toISOString(), TODAY_LIMIT)
+    .all<{
+      id: string
+      type: EventType
+      occurred_at: string
+      amount_minor: number | null
+      currency: string | null
+      summary: string
+      warranty_ends_on: string | null
+      visibility: string
+      actor_id: string
+    }>()
+  return listed.results
+    .filter((row) => isVisibility(row.visibility) && canRead(session.role, row.visibility, row.actor_id, session.userId))
+    .map((row) => ({
+      id: row.id,
+      type: row.type,
+      occurredAt: row.occurred_at,
+      amountMinor: row.amount_minor,
+      currency: row.currency,
+      summary: row.summary,
+      warrantyEndsOn: row.warranty_ends_on,
+    }))
+}
+
+function replyFromResult(json: string | null): string | null {
+  if (!json) return null
+  try {
+    const body = JSON.parse(json) as { reply?: unknown }
+    return typeof body.reply === "string" && body.reply.trim() !== "" ? body.reply : null
+  } catch {
+    return null
+  }
 }
 
 export async function findAlias(
@@ -179,22 +255,6 @@ export async function findAlias(
     )
     .bind(householdId, normalized, householdId)
     .first<EntityHit>()
-}
-
-export async function findEntity(
-  db: D1Database,
-  householdId: string,
-  id: string,
-): Promise<EntityHit | null> {
-  const row = await db
-    .prepare(
-      `SELECT id, name, kind FROM entities
-       WHERE id = ? AND household_id = ? AND status = 'active'`,
-    )
-    .bind(id, householdId)
-    .first<{ id: string; name: string; kind: string }>()
-  if (!row) return null
-  return { ...row, normalized: "" }
 }
 
 export async function listVehicles(db: D1Database, householdId: string): Promise<EntityHit[]> {
@@ -272,6 +332,69 @@ export async function eventsForMessage(
     warrantyEndsOn: row.warranty_ends_on,
     entityName: row.entity_name,
   }))
+}
+
+export type EventDetail = EventAccess & {
+  type: EventType
+  occurredAt: string
+  amountMinor: number | null
+  currency: string | null
+  warrantyEndsOn: string | null
+  dataJson: string
+  entity: EntityHit | null
+}
+
+export async function loadEventDetail(
+  db: D1Database,
+  householdId: string,
+  eventId: string,
+): Promise<EventDetail | null> {
+  const row = await db
+    .prepare(
+      `SELECT e.id, e.actor_id, e.visibility, e.status, e.version, e.type, e.occurred_at,
+              e.amount_minor, e.currency, e.warranty_ends_on, e.data_json,
+              en.id AS entity_id, en.name AS entity_name, en.kind AS entity_kind
+       FROM events e
+       LEFT JOIN event_entities ee ON ee.event_id = e.id
+       LEFT JOIN entities en ON en.id = ee.entity_id
+       WHERE e.id = ? AND e.household_id = ?
+       LIMIT 1`,
+    )
+    .bind(eventId, householdId)
+    .first<{
+      id: string
+      actor_id: string
+      visibility: string
+      status: string
+      version: number
+      type: EventType
+      occurred_at: string
+      amount_minor: number | null
+      currency: string | null
+      warranty_ends_on: string | null
+      data_json: string
+      entity_id: string | null
+      entity_name: string | null
+      entity_kind: string | null
+    }>()
+  if (!row || !isVisibility(row.visibility)) return null
+  return {
+    id: row.id,
+    actorId: row.actor_id,
+    visibility: row.visibility,
+    status: row.status,
+    version: row.version,
+    type: row.type,
+    occurredAt: row.occurred_at,
+    amountMinor: row.amount_minor,
+    currency: row.currency,
+    warrantyEndsOn: row.warranty_ends_on,
+    dataJson: row.data_json,
+    entity:
+      row.entity_id && row.entity_name && row.entity_kind
+        ? { id: row.entity_id, name: row.entity_name, kind: row.entity_kind, normalized: "" }
+        : null,
+  }
 }
 
 export async function requireCorrectable(
@@ -444,44 +567,6 @@ export async function voidFact(env: Env, session: Session, eventId: string): Pro
     // The event is already voided. File cleanup can run again later.
   }
   return { ok: true, id: event.id }
-}
-
-export async function insertReminder(
-  db: D1Database,
-  input: {
-    householdId: string
-    eventId: string | null
-    title: string
-    dueAt: string
-    audience: "household" | "adults"
-  },
-): Promise<void> {
-  await db
-    .prepare(
-      `INSERT INTO reminders (id, household_id, event_id, title, due_at, audience, status)
-       VALUES (?, ?, ?, ?, ?, ?, 'open')`,
-    )
-    .bind(
-      crypto.randomUUID(),
-      input.householdId,
-      input.eventId,
-      input.title,
-      input.dueAt,
-      input.audience,
-    )
-    .run()
-}
-
-export async function eventInHousehold(
-  db: D1Database,
-  householdId: string,
-  eventId: string,
-): Promise<boolean> {
-  const row = await db
-    .prepare("SELECT id FROM events WHERE id = ? AND household_id = ?")
-    .bind(eventId, householdId)
-    .first<{ id: string }>()
-  return row != null
 }
 
 export async function latestEventId(

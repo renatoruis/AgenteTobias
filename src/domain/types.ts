@@ -11,6 +11,7 @@ export type EventType =
   | "note"
   | "incident"
   | "reminder"
+  | "income"
 
 export type Session = {
   userId: string
@@ -34,9 +35,8 @@ export type EventSummary = {
 export type MessageResponse = {
   messageId: string
   conversationId: string
-  status: "interpreted" | "stored" | "clarification" | "proposal"
+  status: "interpreted" | "stored" | "proposal"
   reply: string
   events: EventSummary[]
-  clarification: { question: string } | null
   idempotent: boolean
 }

@@ -11,7 +11,7 @@ import type {
 } from "@simplewebauthn/server"
 import { base64ToBytes, base64UrlToBytes, bytesToBase64 } from "./codec"
 
-export const RP_ID = "timdevops.com.br"
+export const RP_ID = "tobias.timdevops.com.br"
 export const PRODUCTION_ORIGIN = "https://tobias.timdevops.com.br"
 const RP_NAME = "AgenteTobias"
 

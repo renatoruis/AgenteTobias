@@ -1,5 +1,7 @@
 # ADR-009 — Execução das tools do agente
 
+Substituído por [ADR-012](ADR-012-conversational-agent.md).
+
 ## Context
 
 O modelo não pode receber SQL nem gravar JSON livre. Também não deve haver uma tool por cada conceito do domínio, senão a superfície cresce e a escolha degrada-se. A aplicação é quem decide o que é permitido. Conteúdo externo (frase, transcrição, PDF futuro) é não confiável.

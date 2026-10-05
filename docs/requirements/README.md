@@ -1,6 +1,6 @@
 # Requisitos — trabalho em paralelo
 
-O alvo da família é uma PWA no iPhone, em `https://tobias.timdevops.com.br`, com chat, botão push-to-talk e lembretes. A API é um Cloudflare Worker. O contrato comum está em [00-contract.md](00-contract.md). A conta está em [../CLOUDFLARE.md](../CLOUDFLARE.md).
+O alvo da família é uma app iOS no TestFlight, em conversa com `https://tobias.timdevops.com.br`, com chat, botão push-to-talk, lembretes e definições. A API é um Cloudflare Worker. O contrato comum está em [00-contract.md](00-contract.md). A conta está em [../CLOUDFLARE.md](../CLOUDFLARE.md).
 
 Há dois cortes. Os dois usam os mesmos tipos e as mesmas rotas. O corte 2 acrescenta comportamento, não uma API nova.
 
@@ -25,7 +25,7 @@ Cada linha é um agent. Trabalham ao mesmo tempo. Só editam a coluna “Dono”
 | speech | [06-speech.md](06-speech.md) | `src/infrastructure/ai/stt.ts`, `src/http/routes/speech.ts` |
 | files | [07-files.md](07-files.md) | `src/infrastructure/r2.ts`, `src/http/routes/files.ts` |
 | search | [08-search.md](08-search.md) | `src/infrastructure/search.ts`, `src/application/search/**` |
-| client | [09-client.md](09-client.md) | `src/client/**` |
+| client | [09-client.md](09-client.md) | `ios/**` |
 | tests | [10-tests.md](10-tests.md) | `tests/**` |
 
 `src/http/index.ts` monta as rotas chamando `registerAuth`, `registerMessages`, `registerReminders`, `registerEvents`, `registerSpeech`, `registerFiles`. Cada pacote exporta a sua função de registo. O pacote platform importa-as. Se o ficheiro ainda não existir, o platform deixa a importação no sítio certo e não reimplementa a rota.
@@ -51,9 +51,9 @@ Os pacotes não esperam uns pelos outros para escrever ficheiros. A integração
 2. database aplica a migration no D1 local.
 3. auth cria o primeiro owner com `BOOTSTRAP_TOKEN`.
 4. agent + domain fazem o fluxo de texto.
-5. client liga o chat a essas rotas.
+5. client é a app iOS, contra essas rotas.
 6. speech, files, reminders e search entram sem mudar o JSON já publicado.
 
 ## Fora de todos os pacotes
 
-App Store, Capacitor, Web Push, OCR, Open Banking, geocoder, segundo modelo em série, Cloudflare Access, Google login, monorepo.
+OCR, Open Banking, geocoder, segundo modelo em série, Cloudflare Access, Google login, monorepo. A app pública na App Store fica para depois do TestFlight.

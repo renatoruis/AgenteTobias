@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs"
+import { readdirSync, readFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 
@@ -65,15 +65,18 @@ export function splitSql(sql: string): string[] {
 }
 
 export async function applyMigration(db: TestD1): Promise<void> {
-  const path = join(root, "migrations/0001_init.sql")
-  let sql: string
-  try {
-    sql = readFileSync(path, "utf8")
-  } catch {
+  const dir = join(root, "migrations")
+  const files = readdirSync(dir)
+    .filter((name) => name.endsWith(".sql"))
+    .sort()
+  if (!files.includes("0001_init.sql")) {
     throw new Error("migrations/0001_init.sql em falta (pacote database)")
   }
-  for (const statement of splitSql(sql)) {
-    await db.exec(statement)
+  for (const file of files) {
+    const sql = readFileSync(join(dir, file), "utf8")
+    for (const statement of splitSql(sql)) {
+      await db.exec(statement)
+    }
   }
 }
 

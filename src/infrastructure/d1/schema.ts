@@ -5,6 +5,7 @@ import {
   index,
   integer,
   primaryKey,
+  real,
   sqliteTable,
   text,
   unique,
@@ -289,6 +290,67 @@ export const embeddingJobs = sqliteTable(
       sql`${table.status} IN ('pending', 'ready', 'failed')`,
     ),
   ],
+)
+
+export const userPreferences = sqliteTable(
+  "user_preferences",
+  {
+    userId: text("user_id")
+      .primaryKey()
+      .references(() => users.id),
+    theme: text("theme").$type<"system" | "light" | "dark">().notNull().default("system"),
+    accent: text("accent").$type<"teal" | "blue" | "green" | "orange">().notNull().default("teal"),
+    speakReplies: integer("speak_replies").notNull().default(0),
+    speechRate: real("speech_rate").notNull().default(0.5),
+    notifyReminders: integer("notify_reminders").notNull().default(1),
+    notifySound: integer("notify_sound").notNull().default(1),
+    notifyBadge: integer("notify_badge").notNull().default(1),
+    quietStart: text("quiet_start"),
+    quietEnd: text("quiet_end"),
+  },
+  (table) => [
+    check("user_preferences_theme_check", sql`${table.theme} IN ('system', 'light', 'dark')`),
+    check("user_preferences_accent_check", sql`${table.accent} IN ('teal', 'blue', 'green', 'orange')`),
+    check("user_preferences_speak_check", sql`${table.speakReplies} IN (0, 1)`),
+    check("user_preferences_rate_check", sql`${table.speechRate} >= 0 AND ${table.speechRate} <= 1`),
+    check("user_preferences_reminders_check", sql`${table.notifyReminders} IN (0, 1)`),
+    check("user_preferences_sound_check", sql`${table.notifySound} IN (0, 1)`),
+    check("user_preferences_badge_check", sql`${table.notifyBadge} IN (0, 1)`),
+  ],
+)
+
+export const pushTokens = sqliteTable(
+  "push_tokens",
+  {
+    id: text("id").primaryKey(),
+    deviceId: text("device_id")
+      .notNull()
+      .references(() => devices.id),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id),
+    token: text("token").notNull(),
+    environment: text("environment").$type<"sandbox" | "production">().notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    check("push_tokens_environment_check", sql`${table.environment} IN ('sandbox', 'production')`),
+    unique("push_tokens_device_user").on(table.deviceId, table.userId),
+  ],
+)
+
+export const reminderDeliveries = sqliteTable(
+  "reminder_deliveries",
+  {
+    reminderId: text("reminder_id")
+      .notNull()
+      .references(() => reminders.id),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id),
+    sentAt: text("sent_at").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.reminderId, table.userId] })],
 )
 
 export const usage = sqliteTable("usage", {

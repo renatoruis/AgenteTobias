@@ -2,9 +2,11 @@
 
 Dono de `src/application/auth/**` e `src/http/routes/auth.ts`. Exporta `registerAuth` e `readSession`.
 
-RP ID WebAuthn: `timdevops.com.br`. Origin: `https://tobias.timdevops.com.br`. Não usar `localhost` como origin aceite em produção. Em `wrangler dev`, a origin local pode estar na lista só quando `import.meta.env` ou uma var `WEB_AUTHN_ORIGIN` existir. Default da var: `https://tobias.timdevops.com.br`.
+RP ID WebAuthn: `tobias.timdevops.com.br`. Origin de produção: `https://tobias.timdevops.com.br`. Não usar `localhost` como origin aceite em produção. Em `wrangler dev`, a origin local pode estar na lista só quando `import.meta.env` ou uma var `WEB_AUTHN_ORIGIN` existir. Default da var: `https://tobias.timdevops.com.br`.
 
-Bibliotecas: `@simplewebauthn/server` no Worker, `@simplewebauthn/browser` no cliente (o cliente chama-as; este pacote documenta o JSON que o browser precisa).
+A app iOS associa `webcredentials:tobias.timdevops.com.br`. O Worker serve `/.well-known/apple-app-site-association` com `APNS_TEAM_ID` e o bundle. A origin que o verifier aceita é a de produção. Uma origin diferente, se a asserção nativa a trouxer, só se acrescenta depois de um registo real no aparelho.
+
+Bibliotecas: `@simplewebauthn/server` no Worker. A app usa AuthenticationServices e envia o mesmo JSON.
 
 ## Bootstrap
 

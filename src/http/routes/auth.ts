@@ -54,6 +54,7 @@ import {
   verifyAuthentication,
   verifyRegistration,
 } from "../../application/auth/webauthn"
+import { registerAccount } from "./account"
 import type { Context } from "hono"
 import { Hono } from "hono"
 import { setCookie } from "hono/cookie"
@@ -155,6 +156,7 @@ export function registerAuth<E extends AuthEnv>(app: Hono<E>): void {
   app.post("/api/kiosk/devices", (c) => kioskDevice(c))
   app.post("/api/kiosk/unlock", (c) => kioskUnlock(c))
   app.post("/api/users/:id/pin", (c) => setUserPin(c))
+  registerAccount(app)
 }
 
 async function bootstrap<E extends AuthEnv>(c: Context<E>) {

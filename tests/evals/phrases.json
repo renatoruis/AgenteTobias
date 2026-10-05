@@ -3,45 +3,40 @@
     "input": "abasteci o i30 70 euros",
     "fixture": [{ "kind": "vehicle", "name": "i30" }],
     "expect": {
-      "tool": "record_event",
+      "tool": "remember",
       "type": "vehicle.fuel",
       "amountMinor": 7000,
-      "entityNames": ["i30"],
-      "clarification": null
+      "entityNames": ["i30"]
     }
   },
   {
     "input": "a Renata comprou uma air fryer por 129 e tem dois anos de garantia",
     "fixture": [],
     "expect": {
-      "tool": "record_event",
+      "tool": "remember",
       "type": ["purchase", "warranty"],
       "amountMinor": 12900,
       "entityNames": ["air fryer"],
-      "warrantyMonths": 24,
-      "clarification": null
+      "warrantyMonths": 24
     }
   },
   {
     "input": "guardei a chave reserva na gaveta",
     "fixture": [],
     "expect": {
-      "tool": "record_event",
+      "tool": "remember",
       "type": "object.location",
-      "amountMinor": null,
-      "entityNames": ["chave reserva"],
-      "clarification": null
+      "entityNames": ["gaveta"]
     }
   },
   {
     "input": "gastei 80 conto no continente",
     "fixture": [{ "kind": "merchant", "name": "Continente" }],
     "expect": {
-      "tool": "record_event",
+      "tool": "remember",
       "type": "expense",
       "amountMinor": 8000,
-      "entityNames": ["Continente"],
-      "clarification": null
+      "entityNames": ["Continente"]
     }
   },
   {
@@ -51,22 +46,57 @@
       { "kind": "vehicle", "name": "Aveo" }
     ],
     "expect": {
-      "tool": "ask_clarification",
-      "type": null,
-      "amountMinor": null,
-      "entityNames": [],
-      "clarification": "Foi o i30 ou o Aveo?"
+      "tool": "remember",
+      "type": ["vehicle.maintenance", "note"],
+      "orQuestionMentioning": ["i30", "Aveo"]
     }
   },
   {
     "input": "quanto gastamos no Continente este mês?",
     "fixture": [{ "kind": "merchant", "name": "Continente" }],
     "expect": {
-      "tool": "search_events",
-      "type": null,
-      "amountMinor": null,
-      "entityNames": ["Continente"],
-      "clarification": null
+      "tool": "total",
+      "type": "expense",
+      "entityNames": ["Continente"]
+    }
+  },
+  {
+    "input": "Hoje vendi o teclado por 600 euros",
+    "fixture": [],
+    "expect": {
+      "tool": "remember",
+      "type": "income",
+      "amountMinor": 60000
+    }
+  },
+  {
+    "input": "Hoje é o meu primeiro dia no trabalho novo",
+    "fixture": [],
+    "expect": {
+      "tool": "remember",
+      "type": "note"
+    }
+  },
+  {
+    "input": "Quais foram os registos de hoje?",
+    "fixture": [],
+    "expect": {
+      "tool": "recall"
+    }
+  },
+  {
+    "input": "O que guardaste sobre o carro?",
+    "fixture": [{ "kind": "vehicle", "name": "i30" }],
+    "expect": {
+      "tool": "recall",
+      "entityNames": ["i30"]
+    }
+  },
+  {
+    "input": "Olá Tobias, tudo bem?",
+    "fixture": [],
+    "expect": {
+      "tool": null
     }
   }
 ]

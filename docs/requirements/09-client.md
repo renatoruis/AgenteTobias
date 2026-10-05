@@ -1,51 +1,48 @@
 # Pacote client
 
-Dono de `src/client/**`. PWA Vite + React, sem biblioteca de UI. Servida pelo mesmo Worker, em `https://tobias.timdevops.com.br`.
+Dono de `ios/**`. App SwiftUI, iOS 17 ou mais recente, bundle `br.com.timdevops.tobias`. Fala com `https://tobias.timdevops.com.br` por `URLSession` e o cookie `tobias_session`. Não tem chaves. Não calcula somas: mostra `reply` e, na lista de lembretes, o JSON de `GET /api/reminders`.
 
-O cliente fala só com `/api` na mesma origem. Não tem chaves. Não calcula somas para mostrar como se fossem verdade: mostra `reply` e, na lista de lembretes, o JSON de `GET /api/reminders`.
+Texto da família em português de Portugal. Três separadores: Conversas, Lembretes, Definições.
 
-## Ecrãs
+## Entrada
 
-Um shell, três zonas, telemóvel primeiro (largura 390). Safari iOS.
+Sem sessão (`GET /api/me` → 401): ecrã com o nome AgenteTobias.
 
-1. **Entrada.** Sem sessão (`GET /api/me` → 401): ecrã com o nome AgenteTobias e o botão “Entrar”. Login WebAuthn via `@simplewebauthn/browser` contra `/api/auth/login/options` e `/api/auth/login`. Não há campo de password. Não há login Google.
-2. **Chat.** Lista de bolhas. Campo de texto. Enviar. A bolha do utilizador aparece logo. A resposta substitui o estado “A registar…”.
-3. **Lembretes.** Lista por cima do chat, ou um separador “Lembretes” no mesmo ecrã. Título e data civil em Lisboa. Vazio: “Sem lembretes.”
+- `GET /api/setup` com `needsBootstrap: true`: token, nome e nome da casa, depois a passkey do bootstrap.
+- Caso contrário: **Entrar** (passkey) e convite (`POST /api/auth/register` com `inviteCode` e `displayName`, depois a passkey).
 
-Botões numa proposta (`status: "proposal"`): **Gravar** e **Não** (`POST /api/messages/:id/confirm`). Depois de gravado: **Desfazer** (`POST /api/events/:id/void`) e **Editar** (reabre o texto e reenvia com `correctsEventId` e um `clientMessageId` novo).
+A passkey usa `AuthenticationServices` com RP ID `tobias.timdevops.com.br` e o JSON WebAuthn que o Worker já verifica. O desafio vai no cookie `tobias_challenge`.
 
-Na barra, **Voz** liga a leitura da `reply` com `speechSynthesis`, `pt-PT`, preferência em `localStorage`. Soltar **Falar** destrava o sintetizador. Sem TTS na Cloudflare.
+## Conversas
 
-## Push-to-talk
+Lista de bolhas. Campo de texto. Enviar. A bolha da pessoa aparece logo, com “A registar…”. A resposta mostra `reply`.
 
-Botão grande, redondo, fixo por cima do teclado. Rótulo acessível: “Falar”.
+Botões numa proposta (`status: "proposal"`): **Gravar** e **Não** (`POST /api/messages/:id/confirm`). Depois de gravado: **Desfazer** (`POST /api/events/:id/void`) e **Editar** (reenvia com `correctsEventId` e um `clientMessageId` novo).
 
-- `pointerdown`: pedir microfone, `MediaRecorder` com `mimeType: "audio/mp4"` quando o Safari o oferecer. Se não oferecer, `audio/webm`.
-- Enquanto grava, o botão muda de estado visível (não só cor: texto “A ouvir…”).
-- `pointerup` ou aos 60 s: para, envia `POST /api/speech`.
-- Menos de 0,4 s: não envia. Mensagem “Segura um pouco mais.”
-- A transcrição aparece numa caixa editável. Botão “Registar” chama `POST /api/messages` com esse texto e `source` implícito (o servidor marca `text`; o cliente não precisa do campo `source` porque não está no contrato do POST). O contrato de messages não tem `source`. Não o acrescentar. A mensagem de voz, para o servidor, é texto depois de editada.
-- Falha 503: “A voz falhou. Podes escrever.” O campo de texto fica utilizável.
+**Falar** é um botão redondo ao lado do campo, não por baixo. `pointer` equivalente: toque longo. Grava `audio/mp4` até 60 s. Menos de 0,4 s não envia e diz “Segura um pouco mais.” Soltar envia `POST /api/speech`. A transcrição fica editável. **Registar** chama `POST /api/messages`. Falha de voz: a mensagem de erro do contrato, ou “A voz falhou. Podes escrever.”
 
-Não usar a Web Speech API para transcrever. A fala de volta, se a pessoa ligar a Voz, é o sintetizador do telemóvel.
+Foto ou PDF: `POST /api/files`. Sucesso: “Ficheiro guardado.”
 
-## Offline
+Fila local só para `POST /api/messages` de texto, com o mesmo `clientMessageId`, quando a rede falha.
 
-Service worker da shell: cache do HTML, JS e CSS. Fila em `IndexedDB` só para `POST /api/messages` de texto, com o mesmo `clientMessageId`, quando `navigator.onLine` é falso ou o fetch falha por rede. Ao voltar, reenviar. Não enfileirar áudio nem ficheiros.
+Se a preferência de voz estiver ligada, a `reply` lê-se com `AVSpeechSynthesizer`, `pt-PT`. Começar a gravar pára a leitura.
 
-## Confirmação e erros
+## Lembretes
 
-Mostrar `reply` tal como vem. Mostrar `error.message` do JSON do contrato. Não inventar uma segunda redação.
+Título e data civil em Lisboa. Vazio: “Sem lembretes.” Um aviso que abre a app seleciona o lembrete. A ação **Feito** chama `POST /api/reminders/:id/done`.
 
-€ e datas: se o ecrã precisar de formatar um `dueAt`, usar `Europe/Lisbon` e `pt-PT`.
+## Definições
 
-## Manifesto
-
-`name`: AgenteTobias. `display`: `standalone`. `start_url`: `/`. `theme_color` e ícone simples gerados no próprio pacote (SVG ou PNG pequeno). Sem depender de um serviço externo.
+- **Conta.** Nome (`PATCH /api/me`), papel, passkey neste iPhone, terminar sessão, aparelhos (`GET /api/sessions`, `POST /api/sessions/:id/revoke`). A pessoa revoga as suas. O owner revoga qualquer uma da casa.
+- **Casa** (owner). Nome (`PATCH /api/household`), membros (`GET /api/users`), convite (`POST /api/invites`). O código mostra-se uma vez.
+- **Aparência.** Tema e cor em `GET/PUT /api/me/preferences`: `system` | `light` | `dark`, e `teal` | `blue` | `green` | `orange`. Três ícones no bundle (predefinido, escuro, laranja), guardados no aparelho. O tamanho do texto segue o Dynamic Type.
+- **Voz.** `speakReplies` e `rate` entre 0 e 1.
+- **Notificações.** Permissão do iOS, lembretes, som, distintivo, horas de silêncio (`quietHours` com `start` e `end` em `HH:mm`, ou `null`). O token APNs vai em `PUT /api/devices/current/push` com `environment` `sandbox` em debug e `production` no TestFlight.
+- **Privacidade.** Estado do microfone, das fotos e das notificações, com ligação às definições do sistema.
 
 ## Aceitação
 
-- Em 390 px de largura, o botão Falar não fica por baixo do campo de texto.
+- O botão Falar não fica por baixo do campo de texto.
 - Enviar “gastei 10 euros no Lidl” mostra a bolha antes da resposta.
 - Segurar o botão menos de 0,4 s não chama `/api/speech`.
-- 401 em `/api/me` mostra Entrar, não o chat vazio como se a pessoa estivesse lá.
+- 401 em `/api/me` mostra Entrar, não o chat vazio.

@@ -1,5 +1,7 @@
 # ADR-003 — Abstração do provedor de IA
 
+Substituído por [ADR-012](ADR-012-conversational-agent.md).
+
 ## Context
 
 O modelo interpreta a frase e escolhe uma tool. Não soma, não autoriza e não grava sozinho. O pedido pede independência de um único fornecedor (OpenAI, Anthropic, OpenRouter, Workers AI) e avalia um classificador prévio (“JEV”) para poupar o modelo grande.
