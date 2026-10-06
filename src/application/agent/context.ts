@@ -23,8 +23,9 @@ export type ChatMessage =
 
 export type HouseholdCard = {
   name: string
-  members: Array<{ name: string; role: Role | string }>
+  members: Array<{ name: string; role: Role | string; phone?: string | null }>
   entities: Array<{ name: string; kind: string }>
+  links?: Array<{ label: string; url: string }>
 }
 
 export type Turn = { speaker: string; text: string; reply: string | null }
@@ -57,7 +58,10 @@ export function systemContent(card: HouseholdCard): string {
 
 export function renderCard(card: HouseholdCard): string {
   const lines = [`Household: ${card.name}`]
-  const members = card.members.map((member) => `${member.name} (${member.role})`)
+  const members = card.members.map((member) => {
+    const phone = member.phone?.trim()
+    return phone ? `${member.name} (${member.role}, ${phone})` : `${member.name} (${member.role})`
+  })
   lines.push(`Members: ${members.length > 0 ? members.join(", ") : "none"}`)
   const groups = new Map<string, string[]>()
   for (const entity of card.entities.slice(0, CARD_ENTITY_LIMIT)) {
@@ -67,6 +71,10 @@ export function renderCard(card: HouseholdCard): string {
   }
   for (const [kind, names] of groups) lines.push(`${capitalize(kind)}s: ${names.join(", ")}`)
   if (groups.size === 0) lines.push("Entities: none yet")
+  const links = card.links ?? []
+  if (links.length > 0) {
+    lines.push(`Links: ${links.map((link) => `${link.label} ${link.url}`).join("; ")}`)
+  }
   lines.push("Currency: EUR. Timezone: Europe/Lisbon.")
   return lines.join("\n")
 }

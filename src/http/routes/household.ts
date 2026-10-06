@@ -35,7 +35,8 @@ async function household(c: Context<HouseholdEnv>) {
   if (session instanceof Response) return session
   const members = await c.env.DB.prepare(
     `SELECT id, display_name, role FROM users
-     WHERE household_id = ? ORDER BY display_name`,
+     WHERE household_id = ? AND removed_at IS NULL
+     ORDER BY display_name`,
   )
     .bind(session.householdId)
     .all<{ id: string; display_name: string; role: Role }>()
@@ -87,6 +88,7 @@ async function addMember(c: Context<HouseholdEnv>) {
     householdId: session.householdId,
     displayName,
     role,
+    phone: null,
     codeHash: await hashCode("invite", code, pepper),
     now: now.toISOString(),
     expiresAt: expiresAt(now, CODE_SECONDS),

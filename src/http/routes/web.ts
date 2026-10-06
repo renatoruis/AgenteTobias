@@ -1,8 +1,8 @@
 import { CODE_SECONDS, generateCode, hashCode } from "../../application/auth/codes"
-import { renameHousehold } from "../../application/auth/account"
+import { removeMember, renameHousehold, updateMember } from "../../application/auth/account"
 import { expiresAt, readSession, SESSION_COOKIE, CHALLENGE_COOKIE } from "../../application/auth/session"
 import { createInvite, hasHousehold, revokeSession } from "../../application/auth/store"
-import { createEntity } from "../../application/agent/sql"
+import { createEntity, retireEntity, updateEntity } from "../../application/agent/sql"
 import { activeToken, issueToken, revokeToken } from "../../application/mcp/tokens"
 import { normalizeAlias } from "../../domain/alias"
 import { TIME_ZONE } from "../../application/agent/context"
@@ -31,7 +31,11 @@ export function registerWeb<E extends WebEnv>(app: Hono<E>): void {
   app.get("/casa", (c) => casa(c))
   app.post("/casa/nome", (c) => postNome(c))
   app.post("/casa/membros", (c) => postMembro(c))
+  app.post("/casa/membros/:id", (c) => postMembroId(c))
   app.post("/casa/entidades", (c) => postEntidade(c))
+  app.post("/casa/entidades/:id", (c) => postEntidadeId(c))
+  app.post("/casa/links", (c) => postLink(c))
+  app.post("/casa/links/:id", (c) => postLinkId(c))
   app.get("/estatisticas", (c) => estatisticas(c))
   app.get("/ligacao", (c) => ligacao(c))
   app.post("/ligacao", (c) => postLigacao(c))
@@ -43,25 +47,30 @@ async function home<E extends WebEnv>(c: Context<E>) {
   if (session) return c.redirect("/casa", 303)
   const bootstrap = !(await hasHousehold(c.env.DB))
   const body = bootstrap
-    ? `<h1>AgenteTobias</h1>
-<p>Primeira vez. Cria a casa e a tua passkey.</p>
+    ? `<h1>Tobias</h1>
+<p class="lead">Cria a casa e a tua passkey.</p>
 <p id="erro" class="erro"></p>
 <form id="bootstrap">
-  <label>Token de arranque <input name="token" required autocomplete="off"></label>
-  <label>O teu nome <input name="displayName" required maxlength="80"></label>
-  <label>Nome da casa <input name="householdName" required maxlength="80"></label>
-  <button type="submit">Criar</button>
+  <div class="inset">
+    <label class="field"><span>Token</span><input name="token" required autocomplete="off"></label>
+    <label class="field"><span>O teu nome</span><input name="displayName" required maxlength="80" autocomplete="name"></label>
+    <label class="field"><span>Casa</span><input name="householdName" required maxlength="80"></label>
+  </div>
+  <button class="primary" type="submit">Criar</button>
 </form>`
-    : `<h1>AgenteTobias</h1>
+    : `<h1>Tobias</h1>
+<p class="lead">Entra com a tua passkey.</p>
 <p id="erro" class="erro"></p>
-<p><button type="button" id="entrar">Entrar</button></p>
+<button class="primary" type="button" id="entrar">Entrar</button>
 <h2>Tenho um convite</h2>
 <form id="convite">
-  <label>Código <input name="inviteCode" required autocomplete="off"></label>
-  <label>O teu nome <input name="displayName" required maxlength="80"></label>
-  <button type="submit">Registar</button>
+  <div class="inset">
+    <label class="field"><span>Código</span><input name="inviteCode" required autocomplete="one-time-code" autocapitalize="characters"></label>
+    <label class="field"><span>Nome</span><input name="displayName" required maxlength="80" autocomplete="name"></label>
+    <button class="link" type="submit">Registar</button>
+  </div>
 </form>`
-  return c.html(documentPage("AgenteTobias", body, false), 200, NO_STORE)
+  return c.html(documentPage("Tobias", body, null), 200, NO_STORE)
 }
 
 async function casa<E extends WebEnv>(c: Context<E>) {
@@ -70,51 +79,69 @@ async function casa<E extends WebEnv>(c: Context<E>) {
   const house = await loadHouse(c.env.DB, session.householdId)
   const notice = errorText(c.req.query("erro"))
   const owner = session.role === "owner"
-  const kinds = entityKindSchema.options
-    .map((kind) => `<option value="${kind}">${escapeHtml(KIND_LABEL[kind] ?? kind)}</option>`)
-    .join("")
   const members = house.members
-    .map((member) => `<li>${escapeHtml(member.display_name)} — ${escapeHtml(ROLE_LABEL[member.role] ?? member.role)}</li>`)
+    .map((member) => (owner ? memberForm(member) : memberRow(member)))
     .join("")
-  const entities = house.entities
-    .map((entity) => {
-      const alias = entity.aliases.filter((item) => item !== normalizeAlias(entity.name))
-      const extra = alias.length > 0 ? ` (${alias.map((item) => escapeHtml(item)).join(", ")})` : ""
-      return `<li>${escapeHtml(KIND_LABEL[entity.kind] ?? entity.kind)}: ${escapeHtml(entity.name)}${extra}</li>`
-    })
-    .join("")
-  const forms = owner
-    ? `<h2>Nome da casa</h2>
-<form method="post" action="/casa/nome">
-  <label>Nome <input name="name" required maxlength="80" value="${escapeHtml(house.name)}"></label>
-  <button type="submit">Guardar</button>
-</form>
-<h2>Novo membro</h2>
-<form method="post" action="/casa/membros">
-  <label>Nome <input name="displayName" required maxlength="80"></label>
-  <label>Papel <select name="role">
-    <option value="adult">Adulto</option>
-    <option value="member">Membro</option>
-    <option value="child">Criança</option>
-  </select></label>
-  <button type="submit">Criar convite</button>
-</form>
-<h2>Nova coisa da casa</h2>
-<form method="post" action="/casa/entidades">
-  <label>Tipo <select name="kind">${kinds}</select></label>
-  <label>Nome <input name="name" required maxlength="80"></label>
-  <label>Outro nome, se houver <input name="alias" maxlength="80"></label>
-  <button type="submit">Guardar</button>
+  const entities = house.entities.map((entity) => (owner ? entityForm(entity) : entityRow(entity))).join("")
+  const links = house.links.map((link) => (owner ? linkForm(link) : linkRow(link))).join("")
+  const addMember = owner
+    ? `<form method="post" action="/casa/membros">
+  <h2>Novo membro</h2>
+  <div class="inset">
+    <label class="field"><span>Nome</span><input name="displayName" required maxlength="80" autocomplete="name"></label>
+    <label class="field"><span>Papel</span><select name="role">
+      <option value="adult">Adulto</option>
+      <option value="member">Membro</option>
+      <option value="child">Criança</option>
+    </select></label>
+    <label class="field"><span>Telefone</span><input name="phone" maxlength="40" inputmode="tel" autocomplete="tel" placeholder="+351"></label>
+    <button class="link" type="submit">Criar convite</button>
+  </div>
 </form>`
-    : `<p>Só o dono altera a casa.</p>`
+    : ""
+  const addEntity = owner
+    ? `<form method="post" action="/casa/entidades">
+  <h2>Nova coisa</h2>
+  <div class="inset">
+    <label class="field"><span>Tipo</span><select name="kind">${kindOptions("")}</select></label>
+    <label class="field"><span>Nome</span><input name="name" required maxlength="80" placeholder="i30"></label>
+    <label class="field"><span>Outro nome</span><input name="alias" maxlength="80" placeholder="o carro"></label>
+    <button class="link" type="submit">Guardar</button>
+  </div>
+</form>`
+    : ""
+  const addLink = owner
+    ? `<form method="post" action="/casa/links">
+  <h2>Novo link</h2>
+  <div class="inset">
+    <label class="field"><span>Nome</span><input name="label" required maxlength="80" placeholder="Escola"></label>
+    <label class="field"><span>Endereço</span><input name="url" required maxlength="500" inputmode="url" placeholder="https://"></label>
+    <button class="link" type="submit">Guardar</button>
+  </div>
+</form>`
+    : ""
+  const rename = owner
+    ? `<form method="post" action="/casa/nome">
+  <h2>Nome da casa</h2>
+  <div class="inset">
+    <label class="field"><span>Nome</span><input name="name" required maxlength="80" value="${escapeHtml(house.name)}"></label>
+    <button class="link" type="submit">Guardar</button>
+  </div>
+</form>`
+    : `<p class="footnote">Só o dono altera a casa.</p>`
   const body = `<h1>${escapeHtml(house.name)}</h1>
-${notice ? `<p class="erro">${escapeHtml(notice)}</p>` : ""}
+${notice ? `<p class="banner">${escapeHtml(notice)}</p>` : ""}
+${rename}
 <h2>Membros</h2>
-<ul>${members || "<li>Ainda não há membros.</li>"}</ul>
-<h2>Casa</h2>
-<ul>${entities || "<li>Ainda não há carros, lojas nem outros nomes.</li>"}</ul>
-${forms}`
-  return c.html(documentPage("Casa", body, true), 200, NO_STORE)
+${members || `<div class="inset"><p class="row empty">Ainda não há membros.</p></div>`}
+${addMember}
+<h2>Coisas da casa</h2>
+${entities || `<div class="inset"><p class="row empty">Ainda não há carros, lojas nem outros nomes.</p></div>`}
+${addEntity}
+<h2>Links</h2>
+${links || `<div class="inset"><p class="row empty">Ainda não há links.</p></div>`}
+${addLink}`
+  return c.html(documentPage("Casa", body, "casa"), 200, NO_STORE)
 }
 
 async function postNome<E extends WebEnv>(c: Context<E>) {
@@ -135,7 +162,9 @@ async function postMembro<E extends WebEnv>(c: Context<E>) {
   const form = await c.req.parseBody()
   const displayName = readName(field(form, "displayName"))
   const role = readRole(field(form, "role"))
+  const phone = readPhone(field(form, "phone"))
   if (!displayName || !role) return c.redirect("/casa?erro=dados", 303)
+  if (phone === false) return c.redirect("/casa?erro=telefone", 303)
   const now = new Date()
   const code = generateCode()
   await createInvite(c.env.DB, {
@@ -143,15 +172,19 @@ async function postMembro<E extends WebEnv>(c: Context<E>) {
     householdId: session.householdId,
     displayName,
     role,
+    phone,
     codeHash: await hashCode("invite", code, pepper),
     now: now.toISOString(),
     expiresAt: expiresAt(now, CODE_SECONDS),
   })
   const body = `<h1>Convite</h1>
-<p>Dá este código a ${escapeHtml(displayName)}. Mostra-se só agora.</p>
-<p class="codigo">${escapeHtml(code)}</p>
-<p><a href="/casa">Voltar à casa</a></p>`
-  return c.html(documentPage("Convite", body, true), 200, NO_STORE)
+<p class="sub">Para ${escapeHtml(displayName)}. Mostra-se só agora.</p>
+<div class="inset">
+  <p class="secret code" id="codigo">${escapeHtml(code)}</p>
+  <button class="link" type="button" data-copy="codigo">Copiar código</button>
+</div>
+<p class="footnote"><a href="/casa">Voltar à casa</a></p>`
+  return c.html(documentPage("Convite", body, "casa"), 200, NO_STORE)
 }
 
 async function postEntidade<E extends WebEnv>(c: Context<E>) {
@@ -180,6 +213,80 @@ async function postEntidade<E extends WebEnv>(c: Context<E>) {
   return c.redirect("/casa", 303)
 }
 
+async function postMembroId<E extends WebEnv>(c: Context<E>) {
+  const session = await requireOwner(c)
+  if (session instanceof Response) return session
+  const id = readId(c.req.param("id") ?? "")
+  if (!id) return c.redirect("/casa?erro=dados", 303)
+  const form = await c.req.parseBody()
+  if (field(form, "action") === "remove") {
+    const removed = await removeMember(c.env.DB, session.householdId, id, new Date().toISOString())
+    return c.redirect(removed ? "/casa" : "/casa?erro=dono", 303)
+  }
+  const displayName = readName(field(form, "displayName"))
+  const phone = readPhone(field(form, "phone"))
+  if (!displayName || phone === false) return c.redirect("/casa?erro=" + (displayName ? "telefone" : "nome"), 303)
+  const saved = await updateMember(c.env.DB, session.householdId, id, displayName, readRole(field(form, "role")), phone)
+  return c.redirect(saved ? "/casa" : "/casa?erro=dados", 303)
+}
+
+async function postEntidadeId<E extends WebEnv>(c: Context<E>) {
+  const session = await requireOwner(c)
+  if (session instanceof Response) return session
+  const id = readId(c.req.param("id") ?? "")
+  if (!id) return c.redirect("/casa?erro=dados", 303)
+  const form = await c.req.parseBody()
+  if (field(form, "action") === "remove") {
+    await retireEntity(c.env.DB, session.householdId, id)
+    return c.redirect("/casa", 303)
+  }
+  const kind = entityKindSchema.safeParse(field(form, "kind"))
+  const name = readName(field(form, "name"))
+  if (!kind.success || !name) return c.redirect("/casa?erro=dados", 303)
+  const normalized = normalizeAlias(name)
+  if (!normalized) return c.redirect("/casa?erro=nome", 303)
+  const alias = readName(field(form, "alias"))
+  const extra = alias ? normalizeAlias(alias) : ""
+  const saved = await updateEntity(c.env.DB, session.householdId, id, kind.data, name, normalized, extra)
+  if (saved === "exists") return c.redirect("/casa?erro=existe", 303)
+  if (saved === "missing") return c.redirect("/casa?erro=dados", 303)
+  return c.redirect("/casa", 303)
+}
+
+async function postLink<E extends WebEnv>(c: Context<E>) {
+  const session = await requireOwner(c)
+  if (session instanceof Response) return session
+  const form = await c.req.parseBody()
+  const label = readName(field(form, "label"))
+  const url = readUrl(field(form, "url"))
+  if (!label) return c.redirect("/casa?erro=nome", 303)
+  if (!url) return c.redirect("/casa?erro=url", 303)
+  await c.env.DB.prepare("INSERT INTO links (id, household_id, label, url, created_at) VALUES (?, ?, ?, ?, ?)")
+    .bind(crypto.randomUUID(), session.householdId, label, url, new Date().toISOString())
+    .run()
+  return c.redirect("/casa", 303)
+}
+
+async function postLinkId<E extends WebEnv>(c: Context<E>) {
+  const session = await requireOwner(c)
+  if (session instanceof Response) return session
+  const id = readId(c.req.param("id") ?? "")
+  if (!id) return c.redirect("/casa?erro=dados", 303)
+  const form = await c.req.parseBody()
+  if (field(form, "action") === "remove") {
+    await c.env.DB.prepare("DELETE FROM links WHERE id = ? AND household_id = ?").bind(id, session.householdId).run()
+    return c.redirect("/casa", 303)
+  }
+  const label = readName(field(form, "label"))
+  const url = readUrl(field(form, "url"))
+  if (!label) return c.redirect("/casa?erro=nome", 303)
+  if (!url) return c.redirect("/casa?erro=url", 303)
+  const saved = await c.env.DB.prepare("UPDATE links SET label = ?, url = ? WHERE id = ? AND household_id = ?")
+    .bind(label, url, id, session.householdId)
+    .run()
+  return c.redirect((saved.meta.changes ?? 0) > 0 ? "/casa" : "/casa?erro=dados", 303)
+}
+
 async function estatisticas<E extends WebEnv>(c: Context<E>) {
   const session = await requireSession(c)
   if (session instanceof Response) return session
@@ -195,7 +302,11 @@ async function estatisticas<E extends WebEnv>(c: Context<E>) {
   )
     .bind(session.householdId, range.from, range.to, ...filter.binds)
     .all<{ type: string; n: number; total: number }>()
-  const members = await count(c.env.DB, "SELECT COUNT(*) AS n FROM users WHERE household_id = ?", session.householdId)
+  const members = await count(
+    c.env.DB,
+    "SELECT COUNT(*) AS n FROM users WHERE household_id = ? AND removed_at IS NULL",
+    session.householdId,
+  )
   const entities = await count(
     c.env.DB,
     "SELECT COUNT(*) AS n FROM entities WHERE household_id = ? AND status = 'active'",
@@ -212,54 +323,72 @@ async function estatisticas<E extends WebEnv>(c: Context<E>) {
   }).format(now)
   const table = list
     .map((row) => {
-      const money = row.type === "expense" || row.type === "income" ? formatEur(Number(row.total)) : ""
-      return `<tr><td>${escapeHtml(TYPE_LABEL[row.type] ?? row.type)}</td><td>${Number(row.n)}</td><td>${escapeHtml(money)}</td></tr>`
+      const money = row.type === "expense" || row.type === "income" ? ` · ${formatEur(Number(row.total))}` : ""
+      return `<div class="row"><span>${escapeHtml(TYPE_LABEL[row.type] ?? row.type)}</span><span class="value">${Number(row.n)}${escapeHtml(money)}</span></div>`
     })
     .join("")
-  const body = `<h1>Estatísticas</h1>
-<p>${escapeHtml(month)}</p>
-<div class="numeros">
-  <p>Despesas<br><strong>${escapeHtml(formatEur(expense))}</strong></p>
-  <p>Receitas<br><strong>${escapeHtml(formatEur(income))}</strong></p>
-  <p>Factos<br><strong>${facts}</strong></p>
-  <p>Membros<br><strong>${members}</strong></p>
-  <p>Coisas da casa<br><strong>${entities}</strong></p>
+  const body = `<h1>Números</h1>
+<p class="sub">${escapeHtml(month)}</p>
+<div class="inset">
+  <div class="row"><span>Despesas</span><span class="value">${escapeHtml(formatEur(expense))}</span></div>
+  <div class="row"><span>Receitas</span><span class="value">${escapeHtml(formatEur(income))}</span></div>
+  <div class="row"><span>Factos</span><span class="value">${facts}</span></div>
+  <div class="row"><span>Membros</span><span class="value">${members}</span></div>
+  <div class="row"><span>Coisas da casa</span><span class="value">${entities}</span></div>
 </div>
-${table ? `<table><tr><th>Tipo</th><th>Quantidade</th><th>Valor</th></tr>${table}</table>` : "<p>Ainda não há factos este mês.</p>"}`
-  return c.html(documentPage("Estatísticas", body, true), 200, NO_STORE)
+<h2>Este mês</h2>
+<div class="inset">${table || `<p class="row empty">Ainda não há factos este mês.</p>`}</div>`
+  return c.html(documentPage("Números", body, "estatisticas"), 200, NO_STORE)
 }
 
 async function ligacao<E extends WebEnv>(c: Context<E>, token?: string) {
   const session = await requireSession(c)
   if (session instanceof Response) return session
   if (session.role !== "owner") {
-    return c.html(documentPage("API", "<h1>API</h1><p>Só o dono gere a ligação.</p>", true), 403, NO_STORE)
+    return c.html(
+      documentPage("Ligação", `<h1>Ligação</h1><p class="footnote">Só o dono gere a ligação.</p>`, "ligacao"),
+      403,
+      NO_STORE,
+    )
   }
   const active = await activeToken(c.env.DB, session.householdId)
   const url = mcpUrl(c.req.url)
   const shown = token
-    ? `<p>Copia o token. Não volta a aparecer.</p>
-<p class="codigo" id="token">${escapeHtml(token)}</p>
-<p><button type="button" id="copiar">Copiar</button></p>`
+    ? `<h2>Token novo</h2>
+<div class="inset">
+  <p class="secret" id="token">${escapeHtml(token)}</p>
+  <button class="link" type="button" data-copy="token">Copiar token</button>
+</div>
+<p class="footnote">Não volta a aparecer. Guarda-o agora.</p>`
     : ""
   const status = active
-    ? `<p>Token activo desde ${escapeHtml(formatWhen(active.created_at))}.</p>
-<form method="post" action="/ligacao">
+    ? `<h2>Token activo</h2>
+<div class="inset"><p class="row"><span>Desde</span><span class="value">${escapeHtml(formatWhen(active.created_at))}</span></p></div>
+<form method="post" action="/ligacao" data-confirm="Revogar este token?">
   <input type="hidden" name="action" value="revoke">
   <input type="hidden" name="id" value="${escapeHtml(active.id)}">
-  <button type="submit">Revogar</button>
+  <div class="inset"><button class="destructive" type="submit">Revogar token</button></div>
 </form>`
-    : "<p>Ainda não há token.</p>"
-  const body = `<h1>API</h1>
-<p>No Claude ou no Cursor, adiciona um servidor MCP com este URL e o cabeçalho <span class="codigo">Authorization: Bearer</span> seguido do token.</p>
-<p class="codigo">${escapeHtml(url)}</p>
+    : ""
+  const body = `<h1>Ligação</h1>
+<p class="sub">Servidor MCP para o Claude ou o Cursor.</p>
+<h2>Endereço</h2>
+<div class="inset">
+  <p class="secret" id="url">${escapeHtml(url)}</p>
+  <button class="link" type="button" data-copy="url">Copiar endereço</button>
+</div>
+<p class="footnote">Cabeçalho Authorization: Bearer, seguido do token.</p>
 ${shown}
 ${status}
 <form method="post" action="/ligacao">
   <input type="hidden" name="action" value="create">
-  <button type="submit">Criar token</button>
+  ${active ? "" : "<h2>Token</h2>"}
+  <div class="inset">
+    ${active ? "" : `<p class="row empty">Ainda não há token.</p>`}
+    <button class="link" type="submit">${active ? "Criar outro token" : "Criar token"}</button>
+  </div>
 </form>`
-  return c.html(documentPage("API", body, true), 200, NO_STORE)
+  return c.html(documentPage("Ligação", body, "ligacao"), 200, NO_STORE)
 }
 
 async function postLigacao<E extends WebEnv>(c: Context<E>) {
@@ -274,7 +403,13 @@ async function postLigacao<E extends WebEnv>(c: Context<E>) {
   }
   if (action !== "create") return c.redirect("/ligacao", 303)
   const pepper = c.env.PIN_PEPPER
-  if (!pepper) return c.html(documentPage("API", "<h1>API</h1><p>A ligação não está disponível.</p>", true), 503, NO_STORE)
+  if (!pepper) {
+    return c.html(
+      documentPage("Ligação", `<h1>Ligação</h1><p class="footnote">A ligação não está disponível.</p>`, "ligacao"),
+      503,
+      NO_STORE,
+    )
+  }
   const token = await issueToken(c.env.DB, session, pepper, new Date())
   return ligacao(c, token)
 }
@@ -298,13 +433,14 @@ async function requireOwner<E extends WebEnv>(c: Context<E>): Promise<Session | 
   const session = await requireSession(c)
   if (session instanceof Response) return session
   if (session.role !== "owner") {
-    return c.html(documentPage("Casa", "<h1>Casa</h1><p>Só o dono faz isto.</p>", true), 403, NO_STORE)
+    return c.html(documentPage("Casa", `<h1>Casa</h1><p class="footnote">Só o dono faz isto.</p>`, "casa"), 403, NO_STORE)
   }
   return session
 }
 
-type MemberRow = { id: string; display_name: string; role: string }
+type MemberRow = { id: string; display_name: string; role: string; phone: string | null }
 type EntityRow = { id: string; kind: string; name: string; normalized: string | null }
+type LinkRow = { id: string; label: string; url: string }
 
 async function loadHouse(db: D1Database, householdId: string) {
   const household = await db
@@ -312,9 +448,17 @@ async function loadHouse(db: D1Database, householdId: string) {
     .bind(householdId)
     .first<{ name: string }>()
   const members = await db
-    .prepare("SELECT id, display_name, role FROM users WHERE household_id = ? ORDER BY display_name")
+    .prepare(
+      `SELECT id, display_name, role, phone FROM users
+       WHERE household_id = ? AND removed_at IS NULL
+       ORDER BY display_name`,
+    )
     .bind(householdId)
     .all<MemberRow>()
+  const links = await db
+    .prepare("SELECT id, label, url FROM links WHERE household_id = ? ORDER BY label")
+    .bind(householdId)
+    .all<LinkRow>()
   const listed = await db
     .prepare(
       `SELECT e.id, e.kind, e.name, a.normalized
@@ -335,7 +479,84 @@ async function loadHouse(db: D1Database, householdId: string) {
     name: household?.name ?? "Casa",
     members: members.results ?? [],
     entities: [...grouped.values()],
+    links: links.results ?? [],
   }
+}
+
+function memberRow(member: MemberRow): string {
+  const phone = member.phone ? ` · ${escapeHtml(member.phone)}` : ""
+  return `<div class="inset"><div class="row"><span>${escapeHtml(member.display_name)}</span><span class="value">${escapeHtml(ROLE_LABEL[member.role] ?? member.role)}${phone}</span></div></div>`
+}
+
+function memberForm(member: MemberRow): string {
+  const owner = member.role === "owner"
+  const role = owner
+    ? `<div class="row"><span>Papel</span><span class="value">Dono</span></div>`
+    : `<label class="field"><span>Papel</span><select name="role">${roleOptions(member.role)}</select></label>`
+  const remove = owner
+    ? ""
+    : `<button class="destructive" type="submit" name="action" value="remove" formnovalidate data-confirm="Remover ${escapeHtml(member.display_name)} da casa?">Remover</button>`
+  return `<form method="post" action="/casa/membros/${escapeHtml(member.id)}">
+  <div class="inset">
+    <label class="field"><span>Nome</span><input name="displayName" required maxlength="80" value="${escapeHtml(member.display_name)}"></label>
+    ${role}
+    <label class="field"><span>Telefone</span><input name="phone" maxlength="40" inputmode="tel" autocomplete="tel" value="${escapeHtml(member.phone ?? "")}"></label>
+    <button class="link" type="submit" name="action" value="save">Guardar</button>
+    ${remove}
+  </div>
+</form>`
+}
+
+function entityRow(entity: { kind: string; name: string; aliases: string[] }): string {
+  const alias = entity.aliases.filter((item) => item !== normalizeAlias(entity.name))
+  const detail = alias.length > 0 ? `<span class="detail">${alias.map((item) => escapeHtml(item)).join(", ")}</span>` : ""
+  return `<div class="inset"><div class="row"><span class="stack"><span>${escapeHtml(entity.name)}</span>${detail}</span><span class="value">${escapeHtml(KIND_LABEL[entity.kind] ?? entity.kind)}</span></div></div>`
+}
+
+function entityForm(entity: { id: string; kind: string; name: string; aliases: string[] }): string {
+  const alias = entity.aliases.find((item) => item !== normalizeAlias(entity.name)) ?? ""
+  return `<form method="post" action="/casa/entidades/${escapeHtml(entity.id)}">
+  <div class="inset">
+    <label class="field"><span>Tipo</span><select name="kind">${kindOptions(entity.kind)}</select></label>
+    <label class="field"><span>Nome</span><input name="name" required maxlength="80" value="${escapeHtml(entity.name)}"></label>
+    <label class="field"><span>Outro nome</span><input name="alias" maxlength="80" value="${escapeHtml(alias)}"></label>
+    <button class="link" type="submit" name="action" value="save">Guardar</button>
+    <button class="destructive" type="submit" name="action" value="remove" formnovalidate data-confirm="Remover ${escapeHtml(entity.name)}?">Remover</button>
+  </div>
+</form>`
+}
+
+function linkRow(link: LinkRow): string {
+  return `<div class="inset"><div class="row"><span class="stack"><span>${escapeHtml(link.label)}</span><span class="detail">${escapeHtml(link.url)}</span></span></div></div>`
+}
+
+function linkForm(link: LinkRow): string {
+  return `<form method="post" action="/casa/links/${escapeHtml(link.id)}">
+  <div class="inset">
+    <label class="field"><span>Nome</span><input name="label" required maxlength="80" value="${escapeHtml(link.label)}"></label>
+    <label class="field"><span>Endereço</span><input name="url" required maxlength="500" inputmode="url" value="${escapeHtml(link.url)}"></label>
+    <button class="link" type="submit" name="action" value="save">Guardar</button>
+    <button class="destructive" type="submit" name="action" value="remove" formnovalidate data-confirm="Remover este link?">Remover</button>
+  </div>
+</form>`
+}
+
+function kindOptions(selected: string): string {
+  return entityKindSchema.options
+    .map((kind) => {
+      const mark = kind === selected ? " selected" : ""
+      return `<option value="${kind}"${mark}>${escapeHtml(KIND_LABEL[kind] ?? kind)}</option>`
+    })
+    .join("")
+}
+
+function roleOptions(selected: string): string {
+  return (["adult", "member", "child"] as const)
+    .map((role) => {
+      const mark = role === selected ? " selected" : ""
+      return `<option value="${role}"${mark}>${ROLE_LABEL[role]}</option>`
+    })
+    .join("")
 }
 
 function visibilityFilter(session: Session): { sql: string; binds: string[] } {
@@ -377,6 +598,30 @@ function formatWhen(iso: string): string {
 function readRole(value: string): Exclude<Role, "owner"> | null {
   if (value === "adult" || value === "member" || value === "child") return value
   return null
+}
+
+function readId(value: string): string | null {
+  if (!/^[A-Za-z0-9-]{1,80}$/.test(value)) return null
+  return value
+}
+
+function readPhone(value: string): string | null | false {
+  const phone = value.trim()
+  if (!phone) return null
+  if (phone.length > 40 || !/^[\d+\s().-]{6,40}$/.test(phone) || !/\d/.test(phone)) return false
+  return phone
+}
+
+function readUrl(value: string): string | null {
+  const raw = value.trim()
+  if (raw.length < 8 || raw.length > 500) return null
+  try {
+    const url = new URL(raw)
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null
+    return url.href
+  } catch {
+    return null
+  }
 }
 
 function readName(value: string): string | null {

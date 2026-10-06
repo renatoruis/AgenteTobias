@@ -10,7 +10,8 @@ export async function listUsers(db: D1Database, householdId: string) {
   const result = await db
     .prepare(
       `SELECT id, display_name, role FROM users
-       WHERE household_id = ? ORDER BY display_name`,
+       WHERE household_id = ? AND removed_at IS NULL
+       ORDER BY display_name`,
     )
     .bind(householdId)
     .all<{ id: string; display_name: string; role: Role }>()
@@ -32,6 +33,49 @@ export async function renameUser(
     .bind(displayName, userId, householdId)
     .run()
   return (result.meta.changes ?? 0) > 0
+}
+
+export async function updateMember(
+  db: D1Database,
+  householdId: string,
+  userId: string,
+  displayName: string,
+  role: Role | null,
+  phone: string | null,
+): Promise<boolean> {
+  const current = await db
+    .prepare("SELECT role FROM users WHERE id = ? AND household_id = ? AND removed_at IS NULL")
+    .bind(userId, householdId)
+    .first<{ role: string }>()
+  if (!current) return false
+  const nextRole = current.role === "owner" ? "owner" : role
+  if (!nextRole) return false
+  const result = await db
+    .prepare(
+      `UPDATE users SET display_name = ?, role = ?, phone = ?
+       WHERE id = ? AND household_id = ? AND removed_at IS NULL`,
+    )
+    .bind(displayName, nextRole, phone, userId, householdId)
+    .run()
+  return (result.meta.changes ?? 0) > 0
+}
+
+export async function removeMember(db: D1Database, householdId: string, userId: string, now: string): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `UPDATE users SET removed_at = ?
+       WHERE id = ? AND household_id = ? AND role != 'owner' AND removed_at IS NULL`,
+    )
+    .bind(now, userId, householdId)
+    .run()
+  if ((result.meta.changes ?? 0) === 0) return false
+  await db.batch([
+    db
+      .prepare("UPDATE sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL")
+      .bind(now, userId),
+    db.prepare("UPDATE invites SET used_at = ? WHERE id = ? AND used_at IS NULL").bind(now, userId),
+  ])
+  return true
 }
 
 export async function renameHousehold(db: D1Database, householdId: string, name: string): Promise<boolean> {

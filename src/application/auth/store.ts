@@ -174,7 +174,7 @@ export async function findPasskey(db: D1Database, credentialId: string): Promise
               u.household_id, u.role, u.display_name
        FROM passkeys p
        JOIN users u ON u.id = p.user_id
-       WHERE p.credential_id = ?`,
+       WHERE p.credential_id = ? AND u.removed_at IS NULL`,
     )
     .bind(credentialId)
     .first<{
@@ -277,6 +277,7 @@ export async function createInvite(
     householdId: string
     displayName: string
     role: Exclude<Role, "owner">
+    phone: string | null
     codeHash: string
     now: string
     expiresAt: string
@@ -285,10 +286,10 @@ export async function createInvite(
   await db.batch([
     db
       .prepare(
-        `INSERT INTO users (id, household_id, display_name, role, created_at)
-         VALUES (?, ?, ?, ?, ?)`,
+        `INSERT INTO users (id, household_id, display_name, role, phone, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
       )
-      .bind(input.userId, input.householdId, input.displayName, input.role, input.now),
+      .bind(input.userId, input.householdId, input.displayName, input.role, input.phone, input.now),
     db
       .prepare(
         `INSERT INTO invites (id, household_id, role, code_hash, expires_at)

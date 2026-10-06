@@ -394,6 +394,7 @@ async function invites<E extends AuthEnv>(c: Context<E>) {
     householdId: session.householdId,
     displayName,
     role,
+    phone: null,
     codeHash: await hashCode("invite", code, pepper),
     now: now.toISOString(),
     expiresAt: expiresAt(now, CODE_SECONDS),

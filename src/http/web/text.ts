@@ -43,6 +43,9 @@ export const ERROR_TEXT: Record<string, string> = {
   dados: "Dados inválidos.",
   proibido: "Só o dono faz isto.",
   indisponivel: "Falhou. Tenta outra vez.",
+  telefone: "O telefone não serve.",
+  url: "O link tem de começar por http:// ou https://.",
+  dono: "O dono da casa não se remove.",
 }
 
 export function errorText(code: string | undefined): string {

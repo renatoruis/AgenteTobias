@@ -167,9 +167,17 @@ export async function householdCard(db: D1Database, session: Session): Promise<H
     .bind(session.householdId)
     .first<{ name: string }>()
   const members = await db
-    .prepare("SELECT display_name AS name, role FROM users WHERE household_id = ? ORDER BY created_at")
+    .prepare(
+      `SELECT display_name AS name, role, phone FROM users
+       WHERE household_id = ? AND removed_at IS NULL
+       ORDER BY created_at`,
+    )
     .bind(session.householdId)
-    .all<{ name: string; role: string }>()
+    .all<{ name: string; role: string; phone: string | null }>()
+  const links = await db
+    .prepare("SELECT label, url FROM links WHERE household_id = ? ORDER BY label")
+    .bind(session.householdId)
+    .all<{ label: string; url: string }>()
   const entities = await db
     .prepare(
       `SELECT name, kind FROM entities
@@ -183,6 +191,7 @@ export async function householdCard(db: D1Database, session: Session): Promise<H
     name: household?.name ?? "Casa",
     members: members.results,
     entities: entities.results,
+    links: links.results,
   }
 }
 
@@ -293,6 +302,54 @@ export async function createEntity(
       .bind(crypto.randomUUID(), householdId, id, normalized),
   ])
   return { id, name, kind, normalized }
+}
+
+export async function updateEntity(
+  db: D1Database,
+  householdId: string,
+  entityId: string,
+  kind: string,
+  name: string,
+  normalized: string,
+  extra: string,
+): Promise<"ok" | "missing" | "exists"> {
+  const current = await db
+    .prepare("SELECT id FROM entities WHERE id = ? AND household_id = ? AND status = 'active'")
+    .bind(entityId, householdId)
+    .first<{ id: string }>()
+  if (!current) return "missing"
+  const alias = extra && extra !== normalized ? extra : ""
+  try {
+    await db.batch([
+      db
+        .prepare("UPDATE entities SET kind = ?, name = ? WHERE id = ? AND household_id = ? AND status = 'active'")
+        .bind(kind, name, entityId, householdId),
+      db.prepare("DELETE FROM aliases WHERE entity_id = ? AND household_id = ?").bind(entityId, householdId),
+      db
+        .prepare("INSERT INTO aliases (id, household_id, entity_id, normalized) VALUES (?, ?, ?, ?)")
+        .bind(crypto.randomUUID(), householdId, entityId, normalized),
+      ...(alias
+        ? [
+            db
+              .prepare("INSERT INTO aliases (id, household_id, entity_id, normalized) VALUES (?, ?, ?, ?)")
+              .bind(crypto.randomUUID(), householdId, entityId, alias),
+          ]
+        : []),
+    ])
+  } catch {
+    return "exists"
+  }
+  return "ok"
+}
+
+export async function retireEntity(db: D1Database, householdId: string, entityId: string): Promise<boolean> {
+  const result = await db
+    .prepare("UPDATE entities SET status = 'retired' WHERE id = ? AND household_id = ? AND status = 'active'")
+    .bind(entityId, householdId)
+    .run()
+  if ((result.meta.changes ?? 0) === 0) return false
+  await db.prepare("DELETE FROM aliases WHERE entity_id = ? AND household_id = ?").bind(entityId, householdId).run()
+  return true
 }
 
 export async function eventsForMessage(

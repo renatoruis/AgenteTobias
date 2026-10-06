@@ -30,6 +30,8 @@ export const users = sqliteTable(
     displayName: text("display_name").notNull(),
     role: text("role").$type<"owner" | "adult" | "member" | "child">().notNull(),
     pinHash: text("pin_hash"),
+    phone: text("phone"),
+    removedAt: text("removed_at"),
     createdAt: text("created_at").notNull(),
   },
   (table) => [
@@ -318,6 +320,16 @@ export const userPreferences = sqliteTable(
     check("user_preferences_badge_check", sql`${table.notifyBadge} IN (0, 1)`),
   ],
 )
+
+export const links = sqliteTable("links", {
+  id: text("id").primaryKey(),
+  householdId: text("household_id")
+    .notNull()
+    .references(() => households.id),
+  label: text("label").notNull(),
+  url: text("url").notNull(),
+  createdAt: text("created_at").notNull(),
+})
 
 export const mcpTokens = sqliteTable("mcp_tokens", {
   id: text("id").primaryKey(),
