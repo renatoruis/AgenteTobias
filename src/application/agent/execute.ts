@@ -324,7 +324,7 @@ async function recall(env: Env, session: Session, args: unknown, now: Date): Pro
 
   let events: EventSummary[]
   if (filter.query) {
-    events = (await searchText(env.DB, session, filter.query, env)).filter(
+    events = (await searchText(env.DB, session, filter.query)).filter(
       (event) =>
         (!filter.type || event.type === filter.type) &&
         (!from || event.occurredAt >= from) &&

@@ -11,7 +11,7 @@ export function generateCode(): string {
   return code
 }
 
-export async function hashCode(kind: "invite" | "kiosk", code: string, pepper: string): Promise<string> {
+export async function hashCode(kind: "invite" | "kiosk" | "mcp", code: string, pepper: string): Promise<string> {
   const digest = await crypto.subtle.digest(
     "SHA-256",
     new TextEncoder().encode(`${kind}:${pepper}:${code}`),

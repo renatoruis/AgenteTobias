@@ -22,11 +22,10 @@ Já criados. Não criar segundos com outro nome.
 
 | Recurso | Nome | Binding no Worker | Notas |
 | --- | --- | --- | --- |
-| D1 | `agentetobias` | `DB` | UUID `0ce884cc-676a-4a4b-8b37-3ded77968528`. Jurisdição `eu`. Região primária `EEUR`. 0 tabelas. |
+| D1 | `agentetobias` | `DB` | UUID `0ce884cc-676a-4a4b-8b37-3ded77968528`. Jurisdição `eu`. Região primária `EEUR`. |
 | R2 | `agentetobias-files` | `FILES` | Localização `WEUR`. Standard. Privado. |
-| Vectorize | `agentetobias-events` | `VECTORS` | 1024 dimensões, métrica `cosine`. Medido com `@cf/baai/bge-m3` (`shape [1, 1024]`, pooling `cls`). |
-| AI Gateway | `agentetobias` | variável `AI_GATEWAY_ID` | `collect_logs: false`, `zdr: true`, cache TTL 0, 120 pedidos / 60 s. Modelos de terceiros pagos por Unified Billing: crédito pré-pago carregado pelo owner no dashboard (AI Gateway → Billing). Sem BYOK. |
-| Workers AI | binding `AI` | `AI` | O mesmo binding chama modelos de terceiros (`openai/gpt-5-mini`, `google-ai-studio/gemini-2.5-flash-lite`) com `gateway.id`. Modelos Cloudflare em uso: `@cf/openai/whisper-large-v3-turbo`, `@cf/baai/bge-m3`. |
+
+O Worker já não usa o índice Vectorize `agentetobias-events`, o AI Gateway `agentetobias`, nem o Workers AI. Esses recursos continuam na conta. Não os apagar nem os reutilizar noutro projeto sem pedido.
 
 ## O que não mexer
 
@@ -45,21 +44,12 @@ DNS de `timdevops.com.br` que não seja o host `tobias`: não alterar.
 Só via `wrangler secret`. Nunca no git, nunca num markdown.
 
 - `BOOTSTRAP_TOKEN` — uma vez, para criar o owner. Depois deixa de servir quando já existe um household.
-- `PIN_PEPPER` — segredo do hash do PIN do tablet.
+- `PIN_PEPPER` — segredo do hash do token MCP.
 - `SESSION_PEPPER` — se a sessão guardada não for só um id opaco com lookup no D1. Preferir id opaco no cookie e a linha no D1. Nesse caso este segredo não é preciso.
-- `APNS_TEAM_ID` — Team ID da conta Apple. Também entra no `apple-app-site-association`.
-- `APNS_KEY_ID` — id da chave APNs (`.p8`).
-- `APNS_AUTH_KEY` — conteúdo PEM da chave `.p8`.
-
-O bundle `br.com.timdevops.tobias` é a var `APNS_BUNDLE_ID`, não um segredo.
 
 ## Limites a respeitar no código
 
-- Worker no plano Free: 10 ms de CPU por pedido. I/O (D1, R2, modelo) não conta como CPU. Manter o JavaScript curto.
-- Workers AI: 10.000 neurónios por dia incluídos. Acima disso, no Free, a inferência pára até à meia-noite UTC.
-- Áudio máximo 60 s. Ficheiro máximo 10 MB.
-- Gateway: 120 pedidos por minuto neste id. Não subir isto para “não falhar” um ciclo de retry.
-- Unified Billing: sem crédito, as chamadas a modelos de terceiros falham e a mensagem fica `stored`. Verificar o saldo antes de culpar o código.
+- Worker no plano Free: 10 ms de CPU por pedido. I/O (D1, R2) não conta como CPU. Manter o JavaScript curto.
 
 ## Como um agent usa o MCP
 

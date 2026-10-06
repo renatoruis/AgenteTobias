@@ -2,7 +2,6 @@ import { canRead } from "../../domain/access"
 import type { Role, Session, Visibility } from "../../domain/types"
 import type { Env } from "../../env"
 import { CODE_SECONDS, generateCode, hashCode } from "../../application/auth/codes"
-import { clearPinFailures, hashPin, isPin, pinLocked, recordPinFailure, verifyPin } from "../../application/auth/pin"
 import { safeEqual } from "../../application/auth/codec"
 import {
   BOOTSTRAP_SECONDS,
@@ -10,7 +9,6 @@ import {
   CHALLENGE_SECONDS,
   DEVICE_COOKIE,
   DEVICE_SECONDS,
-  KIOSK_SECONDS,
   PERSONAL_SECONDS,
   SESSION_COOKIE,
   decodeChallenge,
@@ -21,24 +19,19 @@ import {
   type ChallengePayload,
 } from "../../application/auth/session"
 import {
-  consumeKioskCode,
   createBootstrap,
   createInvite,
-  createKiosk,
   credentialIds,
   findCode,
   findDevice,
-  findKioskByCode,
   findPasskey,
   findUser,
   hasHousehold,
   loadMe,
-  openKioskSession,
   openPersonalSession,
   redeemInvite,
   revokeSession,
   savePasskey,
-  setPin,
   type MeBody,
 } from "../../application/auth/store"
 import {
@@ -67,7 +60,6 @@ const FORBIDDEN = "Não tens permissão."
 const HOUSE_EXISTS = "A casa já existe."
 const INVALID = "Pedido inválido."
 const INVITE_INVALID = "Convite inválido."
-const PIN_INVALID = "PIN inválido."
 const NOT_FOUND = "Não encontrado."
 const UNAVAILABLE = "Falhou. Tenta outra vez."
 
@@ -153,9 +145,6 @@ export function registerAuth<E extends AuthEnv>(app: Hono<E>): void {
   app.post("/api/auth/logout", (c) => logout(c))
   app.get("/api/me", (c) => me(c))
   app.post("/api/invites", (c) => invites(c))
-  app.post("/api/kiosk/devices", (c) => kioskDevice(c))
-  app.post("/api/kiosk/unlock", (c) => kioskUnlock(c))
-  app.post("/api/users/:id/pin", (c) => setUserPin(c))
   registerAccount(app)
 }
 
@@ -410,113 +399,6 @@ async function invites<E extends AuthEnv>(c: Context<E>) {
     expiresAt: expiresAt(now, CODE_SECONDS),
   })
   return c.json({ code, expiresAt: expiresAt(now, CODE_SECONDS), role })
-}
-
-async function kioskDevice<E extends AuthEnv>(c: Context<E>) {
-  const now = new Date()
-  const session = await requireSession(c, now)
-  if (session instanceof Response) return session
-  if (session.role !== "owner") return fail(c, 403, "forbidden", FORBIDDEN)
-  const body = await readJson(c)
-  const name = body ? readName(body.name) : null
-  if (!name) return fail(c, 400, "validation", INVALID)
-  const pepper = pepperOf(c.env)
-  if (!pepper) return fail(c, 503, "unavailable", UNAVAILABLE)
-  const code = generateCode()
-  const deviceId = crypto.randomUUID()
-  const expires = expiresAt(now, CODE_SECONDS)
-  await createKiosk(c.env.DB, {
-    deviceId,
-    householdId: session.householdId,
-    name,
-    codeHash: await hashCode("kiosk", code, pepper),
-    now: now.toISOString(),
-    expiresAt: expires,
-  })
-  return c.json({ code, expiresAt: expires, deviceId })
-}
-
-async function kioskUnlock<E extends AuthEnv>(c: Context<E>) {
-  const body = await readJson(c)
-  if (!body) return fail(c, 400, "validation", INVALID)
-  const deviceCode = body.deviceCode
-  const userId = body.userId
-  if (typeof deviceCode !== "string" || typeof userId !== "string") return fail(c, 400, "validation", INVALID)
-  if (!isPin(body.pin)) return fail(c, 400, "validation", PIN_INVALID)
-  if (deviceCode.length < 1 || deviceCode.length > 80) return fail(c, 401, "unauthorized", UNAUTHORIZED)
-  const pepper = pepperOf(c.env)
-  if (!pepper) return fail(c, 503, "unavailable", UNAVAILABLE)
-  const now = new Date()
-  const device = await resolveKiosk(c, deviceCode, pepper, now)
-  if (!device) return fail(c, 401, "unauthorized", UNAUTHORIZED)
-  if (pinLocked(device.deviceId, now)) return fail(c, 401, "unauthorized", UNAUTHORIZED)
-  const user = await findUser(c.env.DB, userId)
-  if (!user || user.householdId !== device.householdId) {
-    recordPinFailure(device.deviceId, now)
-    return fail(c, 404, "not_found", NOT_FOUND)
-  }
-  if (!(await verifyPin(body.pin, pepper, user.pinHash))) {
-    recordPinFailure(device.deviceId, now)
-    return fail(c, 401, "unauthorized", UNAUTHORIZED)
-  }
-  if (device.consume && !(await consumeKioskCode(c.env.DB, device.deviceId, now.toISOString()))) {
-    return fail(c, 401, "unauthorized", UNAUTHORIZED)
-  }
-  clearPinFailures(device.deviceId)
-  const sessionId = crypto.randomUUID()
-  await openKioskSession(c.env.DB, {
-    sessionId,
-    userId: user.id,
-    deviceId: device.deviceId,
-    expiresAt: expiresAt(now, KIOSK_SECONDS),
-  })
-  const profile = await loadMe(c.env.DB, user.id, user.householdId)
-  if (!profile) return fail(c, 503, "unavailable", UNAVAILABLE)
-  writeCookie(c, SESSION_COOKIE, sessionId, KIOSK_SECONDS)
-  writeCookie(c, DEVICE_COOKIE, device.deviceId, DEVICE_SECONDS)
-  return c.json(profile)
-}
-
-async function resolveKiosk<E extends AuthEnv>(c: Context<E>, deviceCode: string, pepper: string, now: Date) {
-  const deviceCookie = readCookie(cookieHeader(c), DEVICE_COOKIE)
-  const pairedCode = await findKioskByCode(c.env.DB, await hashCode("kiosk", deviceCode, pepper))
-  if (pairedCode) {
-    const expiry = Date.parse(pairedCode.expiresAt)
-    const expired = Number.isNaN(expiry) || expiry <= now.getTime()
-    if (pairedCode.usedAt) {
-      if (deviceCookie === pairedCode.id) {
-        return { deviceId: pairedCode.id, householdId: pairedCode.householdId, consume: false }
-      }
-    } else if (!expired) {
-      return { deviceId: pairedCode.id, householdId: pairedCode.householdId, consume: true }
-    }
-  }
-  if (deviceCookie && deviceCookie === deviceCode) {
-    const paired = await findDevice(c.env.DB, deviceCode)
-    if (paired?.kind === "kiosk") {
-      return { deviceId: paired.id, householdId: paired.householdId, consume: false }
-    }
-  }
-  return null
-}
-
-async function setUserPin<E extends AuthEnv>(c: Context<E>) {
-  const now = new Date()
-  const session = await requireSession(c, now)
-  if (session instanceof Response) return session
-  const body = await readJson(c)
-  if (!body || !isPin(body.pin)) return fail(c, 400, "validation", PIN_INVALID)
-  const pepper = pepperOf(c.env)
-  if (!pepper) return fail(c, 503, "unavailable", UNAVAILABLE)
-  const userId = c.req.param("id")
-  if (!userId) return fail(c, 404, "not_found", NOT_FOUND)
-  const user = await findUser(c.env.DB, userId)
-  if (!user || user.householdId !== session.householdId) return fail(c, 404, "not_found", NOT_FOUND)
-  const ownAdult = session.role === "adult" && session.userId === user.id
-  if (session.role !== "owner" && !ownAdult) return fail(c, 403, "forbidden", FORBIDDEN)
-  const saved = await setPin(c.env.DB, user.id, session.householdId, await hashPin(body.pin, pepper))
-  if (!saved) return fail(c, 404, "not_found", NOT_FOUND)
-  return c.body(null, 204)
 }
 
 export function sessionMayRead(

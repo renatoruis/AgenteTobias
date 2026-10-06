@@ -489,15 +489,6 @@ export async function writeFact(
     )
   }
 
-  statements.push(
-    db
-      .prepare(
-        `INSERT INTO embedding_jobs (event_id, status, vector_id, text_hash)
-         VALUES (?, 'pending', NULL, NULL)`,
-      )
-      .bind(eventId),
-  )
-
   if (input.supersedesEventId) {
     statements.push(
       db
@@ -517,24 +508,12 @@ export async function indexFact(db: D1Database, eventId: string): Promise<void> 
   try {
     await indexEvent(db, eventId)
   } catch {
-    // The fact stays. Search retries from the pending embedding job and the row.
+    // The fact stays even if the search index misses this write.
   }
 }
 
 export async function retireFact(db: D1Database, eventId: string): Promise<void> {
   await db.prepare("DELETE FROM events_fts WHERE event_id = ?").bind(eventId).run()
-  const updated = await db
-    .prepare("UPDATE embedding_jobs SET status = 'pending', text_hash = NULL WHERE event_id = ?")
-    .bind(eventId)
-    .run()
-  if ((updated.meta?.changes ?? 0) === 0) {
-    await db
-      .prepare(
-        "INSERT INTO embedding_jobs (event_id, status, vector_id, text_hash) VALUES (?, 'pending', NULL, NULL)",
-      )
-      .bind(eventId)
-      .run()
-  }
 }
 
 export type VoidOutcome =

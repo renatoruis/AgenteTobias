@@ -319,39 +319,18 @@ export const userPreferences = sqliteTable(
   ],
 )
 
-export const pushTokens = sqliteTable(
-  "push_tokens",
-  {
-    id: text("id").primaryKey(),
-    deviceId: text("device_id")
-      .notNull()
-      .references(() => devices.id),
-    userId: text("user_id")
-      .notNull()
-      .references(() => users.id),
-    token: text("token").notNull(),
-    environment: text("environment").$type<"sandbox" | "production">().notNull(),
-    updatedAt: text("updated_at").notNull(),
-  },
-  (table) => [
-    check("push_tokens_environment_check", sql`${table.environment} IN ('sandbox', 'production')`),
-    unique("push_tokens_device_user").on(table.deviceId, table.userId),
-  ],
-)
-
-export const reminderDeliveries = sqliteTable(
-  "reminder_deliveries",
-  {
-    reminderId: text("reminder_id")
-      .notNull()
-      .references(() => reminders.id),
-    userId: text("user_id")
-      .notNull()
-      .references(() => users.id),
-    sentAt: text("sent_at").notNull(),
-  },
-  (table) => [primaryKey({ columns: [table.reminderId, table.userId] })],
-)
+export const mcpTokens = sqliteTable("mcp_tokens", {
+  id: text("id").primaryKey(),
+  householdId: text("household_id")
+    .notNull()
+    .references(() => households.id),
+  userId: text("user_id")
+    .notNull()
+    .references(() => users.id),
+  tokenHash: text("token_hash").notNull().unique(),
+  createdAt: text("created_at").notNull(),
+  revokedAt: text("revoked_at"),
+})
 
 export const usage = sqliteTable("usage", {
   id: text("id").primaryKey(),
