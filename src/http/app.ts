@@ -42,7 +42,7 @@ app.use("*", async (c, next) => {
 app.onError((err, c) => {
   console.error(JSON.stringify({ trace_id: c.get("traceId"), error: err.name }))
   return c.json(
-    { error: { code: "unavailable", message: "Falhou. Tenta outra vez." } },
+    { error: { code: "unavailable", message: "Falhou. Tente de novo." } },
     500,
   )
 })

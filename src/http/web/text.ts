@@ -10,7 +10,7 @@ export const KIND_LABEL: Record<string, string> = {
   vehicle: "Carro",
   merchant: "Loja",
   appliance: "Eletrodoméstico",
-  place: "Sítio",
+  place: "Lugar",
   person: "Pessoa",
   pet: "Animal",
   document: "Documento",
@@ -38,14 +38,14 @@ export const TYPE_LABEL: Record<string, string> = {
 }
 
 export const ERROR_TEXT: Record<string, string> = {
-  nome: "O nome não serve.",
+  nome: "Esse nome não serve.",
   existe: "Esse nome já existe.",
   dados: "Dados inválidos.",
-  proibido: "Só o dono faz isto.",
-  indisponivel: "Falhou. Tenta outra vez.",
-  telefone: "O telefone não serve.",
-  url: "O link tem de começar por http:// ou https://.",
-  dono: "O dono da casa não se remove.",
+  proibido: "Só o dono faz isso.",
+  indisponivel: "Falhou. Tente de novo.",
+  telefone: "Esse telefone não serve.",
+  url: "O link precisa começar com http:// ou https://.",
+  dono: "O dono da casa não pode ser removido.",
 }
 
 export function errorText(code: string | undefined): string {

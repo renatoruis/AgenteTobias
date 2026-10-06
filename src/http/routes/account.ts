@@ -15,7 +15,7 @@ type AccountEnv = { Bindings: Env }
 
 const SESSION_MISSING = "Sessão em falta."
 const INVALID = "Pedido inválido."
-const FORBIDDEN = "Não tens permissão."
+const FORBIDDEN = "Você não tem permissão."
 const NOT_FOUND = "Não encontrado."
 
 function fail(

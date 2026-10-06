@@ -7,7 +7,7 @@ Ler antes de escrever código:
 
 Host: `https://tobias.timdevops.com.br`.
 
-Código, tabelas, rotas e tipos em inglês. Texto que a família lê em português de Portugal.
+Código, tabelas, rotas e tipos em inglês. Texto que a família lê em português do Brasil. O fuso é Europe/Lisbon e a moeda é EUR.
 
 Não fazer commit, push, nem deploy para produção sem pedido explícito de quem gere o repositório.
 

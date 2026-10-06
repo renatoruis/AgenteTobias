@@ -48,18 +48,18 @@ async function home<E extends WebEnv>(c: Context<E>) {
   const bootstrap = !(await hasHousehold(c.env.DB))
   const body = bootstrap
     ? `<h1>Tobias</h1>
-<p class="lead">Cria a casa e a tua passkey.</p>
+<p class="lead">Crie a casa e sua passkey.</p>
 <p id="erro" class="erro"></p>
 <form id="bootstrap">
   <div class="inset">
     <label class="field"><span>Token</span><input name="token" required autocomplete="off"></label>
-    <label class="field"><span>O teu nome</span><input name="displayName" required maxlength="80" autocomplete="name"></label>
+    <label class="field"><span>Seu nome</span><input name="displayName" required maxlength="80" autocomplete="name"></label>
     <label class="field"><span>Casa</span><input name="householdName" required maxlength="80"></label>
   </div>
   <button class="primary" type="submit">Criar</button>
 </form>`
     : `<h1>Tobias</h1>
-<p class="lead">Entra com a tua passkey.</p>
+<p class="lead">Entre com sua passkey.</p>
 <p id="erro" class="erro"></p>
 <button class="primary" type="button" id="entrar">Entrar</button>
 <h2>Tenho um convite</h2>
@@ -67,7 +67,7 @@ async function home<E extends WebEnv>(c: Context<E>) {
   <div class="inset">
     <label class="field"><span>Código</span><input name="inviteCode" required autocomplete="one-time-code" autocapitalize="characters"></label>
     <label class="field"><span>Nome</span><input name="displayName" required maxlength="80" autocomplete="name"></label>
-    <button class="link" type="submit">Registar</button>
+    <button class="link" type="submit">Cadastrar</button>
   </div>
 </form>`
   return c.html(documentPage("Tobias", body, null), 200, NO_STORE)
@@ -106,7 +106,7 @@ async function casa<E extends WebEnv>(c: Context<E>) {
     <label class="field"><span>Tipo</span><select name="kind">${kindOptions("")}</select></label>
     <label class="field"><span>Nome</span><input name="name" required maxlength="80" placeholder="i30"></label>
     <label class="field"><span>Outro nome</span><input name="alias" maxlength="80" placeholder="o carro"></label>
-    <button class="link" type="submit">Guardar</button>
+    <button class="link" type="submit">Salvar</button>
   </div>
 </form>`
     : ""
@@ -116,7 +116,7 @@ async function casa<E extends WebEnv>(c: Context<E>) {
   <div class="inset">
     <label class="field"><span>Nome</span><input name="label" required maxlength="80" placeholder="Escola"></label>
     <label class="field"><span>Endereço</span><input name="url" required maxlength="500" inputmode="url" placeholder="https://"></label>
-    <button class="link" type="submit">Guardar</button>
+    <button class="link" type="submit">Salvar</button>
   </div>
 </form>`
     : ""
@@ -125,7 +125,7 @@ async function casa<E extends WebEnv>(c: Context<E>) {
   <h2>Nome da casa</h2>
   <div class="inset">
     <label class="field"><span>Nome</span><input name="name" required maxlength="80" value="${escapeHtml(house.name)}"></label>
-    <button class="link" type="submit">Guardar</button>
+    <button class="link" type="submit">Salvar</button>
   </div>
 </form>`
     : `<p class="footnote">Só o dono altera a casa.</p>`
@@ -178,12 +178,12 @@ async function postMembro<E extends WebEnv>(c: Context<E>) {
     expiresAt: expiresAt(now, CODE_SECONDS),
   })
   const body = `<h1>Convite</h1>
-<p class="sub">Para ${escapeHtml(displayName)}. Mostra-se só agora.</p>
+<p class="sub">Para ${escapeHtml(displayName)}. Só aparece agora.</p>
 <div class="inset">
   <p class="secret code" id="codigo">${escapeHtml(code)}</p>
   <button class="link" type="button" data-copy="codigo">Copiar código</button>
 </div>
-<p class="footnote"><a href="/casa">Voltar à casa</a></p>`
+<p class="footnote"><a href="/casa">Voltar para a casa</a></p>`
   return c.html(documentPage("Convite", body, "casa"), 200, NO_STORE)
 }
 
@@ -316,7 +316,7 @@ async function estatisticas<E extends WebEnv>(c: Context<E>) {
   const expense = sumOf(list, "expense")
   const income = sumOf(list, "income")
   const facts = list.reduce((total, row) => total + Number(row.n), 0)
-  const month = new Intl.DateTimeFormat("pt-PT", {
+  const month = new Intl.DateTimeFormat("pt-BR", {
     month: "long",
     year: "numeric",
     timeZone: TIME_ZONE,
@@ -332,12 +332,12 @@ async function estatisticas<E extends WebEnv>(c: Context<E>) {
 <div class="inset">
   <div class="row"><span>Despesas</span><span class="value">${escapeHtml(formatEur(expense))}</span></div>
   <div class="row"><span>Receitas</span><span class="value">${escapeHtml(formatEur(income))}</span></div>
-  <div class="row"><span>Factos</span><span class="value">${facts}</span></div>
+  <div class="row"><span>Fatos</span><span class="value">${facts}</span></div>
   <div class="row"><span>Membros</span><span class="value">${members}</span></div>
   <div class="row"><span>Coisas da casa</span><span class="value">${entities}</span></div>
 </div>
 <h2>Este mês</h2>
-<div class="inset">${table || `<p class="row empty">Ainda não há factos este mês.</p>`}</div>`
+<div class="inset">${table || `<p class="row empty">Ainda não há fatos neste mês.</p>`}</div>`
   return c.html(documentPage("Números", body, "estatisticas"), 200, NO_STORE)
 }
 
@@ -346,7 +346,7 @@ async function ligacao<E extends WebEnv>(c: Context<E>, token?: string) {
   if (session instanceof Response) return session
   if (session.role !== "owner") {
     return c.html(
-      documentPage("Ligação", `<h1>Ligação</h1><p class="footnote">Só o dono gere a ligação.</p>`, "ligacao"),
+      documentPage("Conexão", `<h1>Conexão</h1><p class="footnote">Só o dono mexe na conexão.</p>`, "ligacao"),
       403,
       NO_STORE,
     )
@@ -359,10 +359,10 @@ async function ligacao<E extends WebEnv>(c: Context<E>, token?: string) {
   <p class="secret" id="token">${escapeHtml(token)}</p>
   <button class="link" type="button" data-copy="token">Copiar token</button>
 </div>
-<p class="footnote">Não volta a aparecer. Guarda-o agora.</p>`
+<p class="footnote">Não aparece de novo. Salve agora.</p>`
     : ""
   const status = active
-    ? `<h2>Token activo</h2>
+    ? `<h2>Token ativo</h2>
 <div class="inset"><p class="row"><span>Desde</span><span class="value">${escapeHtml(formatWhen(active.created_at))}</span></p></div>
 <form method="post" action="/ligacao" data-confirm="Revogar este token?">
   <input type="hidden" name="action" value="revoke">
@@ -370,8 +370,8 @@ async function ligacao<E extends WebEnv>(c: Context<E>, token?: string) {
   <div class="inset"><button class="destructive" type="submit">Revogar token</button></div>
 </form>`
     : ""
-  const body = `<h1>Ligação</h1>
-<p class="sub">Servidor MCP para o Claude ou o Cursor.</p>
+  const body = `<h1>Conexão</h1>
+<p class="sub">Servidor MCP para o Claude, o Cursor ou o GPT.</p>
 <h2>Endereço</h2>
 <div class="inset">
   <p class="secret" id="url">${escapeHtml(url)}</p>
@@ -388,7 +388,7 @@ ${status}
     <button class="link" type="submit">${active ? "Criar outro token" : "Criar token"}</button>
   </div>
 </form>`
-  return c.html(documentPage("Ligação", body, "ligacao"), 200, NO_STORE)
+  return c.html(documentPage("Conexão", body, "ligacao"), 200, NO_STORE)
 }
 
 async function postLigacao<E extends WebEnv>(c: Context<E>) {
@@ -405,7 +405,7 @@ async function postLigacao<E extends WebEnv>(c: Context<E>) {
   const pepper = c.env.PIN_PEPPER
   if (!pepper) {
     return c.html(
-      documentPage("Ligação", `<h1>Ligação</h1><p class="footnote">A ligação não está disponível.</p>`, "ligacao"),
+      documentPage("Conexão", `<h1>Conexão</h1><p class="footnote">A conexão não está disponível.</p>`, "ligacao"),
       503,
       NO_STORE,
     )
@@ -433,7 +433,7 @@ async function requireOwner<E extends WebEnv>(c: Context<E>): Promise<Session | 
   const session = await requireSession(c)
   if (session instanceof Response) return session
   if (session.role !== "owner") {
-    return c.html(documentPage("Casa", `<h1>Casa</h1><p class="footnote">Só o dono faz isto.</p>`, "casa"), 403, NO_STORE)
+    return c.html(documentPage("Casa", `<h1>Casa</h1><p class="footnote">Só o dono faz isso.</p>`, "casa"), 403, NO_STORE)
   }
   return session
 }
@@ -501,7 +501,7 @@ function memberForm(member: MemberRow): string {
     <label class="field"><span>Nome</span><input name="displayName" required maxlength="80" value="${escapeHtml(member.display_name)}"></label>
     ${role}
     <label class="field"><span>Telefone</span><input name="phone" maxlength="40" inputmode="tel" autocomplete="tel" value="${escapeHtml(member.phone ?? "")}"></label>
-    <button class="link" type="submit" name="action" value="save">Guardar</button>
+    <button class="link" type="submit" name="action" value="save">Salvar</button>
     ${remove}
   </div>
 </form>`
@@ -520,7 +520,7 @@ function entityForm(entity: { id: string; kind: string; name: string; aliases: s
     <label class="field"><span>Tipo</span><select name="kind">${kindOptions(entity.kind)}</select></label>
     <label class="field"><span>Nome</span><input name="name" required maxlength="80" value="${escapeHtml(entity.name)}"></label>
     <label class="field"><span>Outro nome</span><input name="alias" maxlength="80" value="${escapeHtml(alias)}"></label>
-    <button class="link" type="submit" name="action" value="save">Guardar</button>
+    <button class="link" type="submit" name="action" value="save">Salvar</button>
     <button class="destructive" type="submit" name="action" value="remove" formnovalidate data-confirm="Remover ${escapeHtml(entity.name)}?">Remover</button>
   </div>
 </form>`
@@ -535,7 +535,7 @@ function linkForm(link: LinkRow): string {
   <div class="inset">
     <label class="field"><span>Nome</span><input name="label" required maxlength="80" value="${escapeHtml(link.label)}"></label>
     <label class="field"><span>Endereço</span><input name="url" required maxlength="500" inputmode="url" value="${escapeHtml(link.url)}"></label>
-    <button class="link" type="submit" name="action" value="save">Guardar</button>
+    <button class="link" type="submit" name="action" value="save">Salvar</button>
     <button class="destructive" type="submit" name="action" value="remove" formnovalidate data-confirm="Remover este link?">Remover</button>
   </div>
 </form>`
@@ -592,7 +592,7 @@ function mcpUrl(requestUrl: string): string {
 function formatWhen(iso: string): string {
   const date = new Date(iso)
   if (Number.isNaN(date.getTime())) return iso
-  return new Intl.DateTimeFormat("pt-PT", { dateStyle: "medium", timeStyle: "short", timeZone: TIME_ZONE }).format(date)
+  return new Intl.DateTimeFormat("pt-BR", { dateStyle: "medium", timeStyle: "short", timeZone: TIME_ZONE }).format(date)
 }
 
 function readRole(value: string): Exclude<Role, "owner"> | null {

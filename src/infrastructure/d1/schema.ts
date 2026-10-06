@@ -16,7 +16,7 @@ export const households = sqliteTable("households", {
   name: text("name").notNull(),
   timezone: text("timezone").notNull().default("Europe/Lisbon"),
   currency: text("currency").notNull().default("EUR"),
-  locale: text("locale").notNull().default("pt-PT"),
+  locale: text("locale").notNull().default("pt-BR"),
   createdAt: text("created_at").notNull(),
 })
 

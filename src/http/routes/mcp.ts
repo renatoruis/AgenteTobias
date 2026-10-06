@@ -8,7 +8,7 @@ type McpEnv = { Bindings: Env }
 
 export function registerMcp<E extends McpEnv>(app: Hono<E>): void {
   app.post("/mcp", (c) => mcp(c))
-  app.get("/mcp", (c) => c.json({ error: { code: "method_not_allowed", message: "Usa POST." } }, 405))
+  app.get("/mcp", (c) => c.json({ error: { code: "method_not_allowed", message: "Use POST." } }, 405))
 }
 
 async function mcp<E extends McpEnv>(c: Context<E>) {

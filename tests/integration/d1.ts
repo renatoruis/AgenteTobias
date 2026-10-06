@@ -178,7 +178,7 @@ export async function seedHousehold(
   const now = "2026-10-05T12:00:00.000Z"
   await db
     .prepare(
-      "INSERT INTO households (id, name, timezone, currency, locale, created_at) VALUES (?, ?, 'Europe/Lisbon', 'EUR', 'pt-PT', ?)",
+      "INSERT INTO households (id, name, timezone, currency, locale, created_at) VALUES (?, ?, 'Europe/Lisbon', 'EUR', 'pt-BR', ?)",
     )
     .bind(ids.householdId, ids.name, now)
     .run()

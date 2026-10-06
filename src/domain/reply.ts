@@ -78,7 +78,7 @@ export function replyFor(event: ReplyEvent): string {
   if (event.type === "object.location") {
     if (name && event.place) return `Registrei ${name} em ${event.place}.`
     if (event.place) return `Registrei em ${event.place}.`
-    return "Registrei o sítio."
+    return "Registrei o lugar."
   }
 
   if (event.type === "note") return quoted("Nota", event.text, event)
@@ -96,11 +96,11 @@ export function proposalFor(event: ReplyEvent): string {
     const body = event.text?.trim() || summaryFor(event)
     const day = formatWarrantyDate(event.occurredOn)
     const detail = day ? `«${body}», ${day}` : `«${body}»`
-    return `Entendi: ${detail}. Gravo?`
+    return `Entendi: ${detail}. Salvo?`
   }
   const day = otherDay(event)
   const detail = day ? `${summaryFor(event)}, ${day}` : summaryFor(event)
-  return `Entendi: ${detail}. Gravo?`
+  return `Entendi: ${detail}. Salvo?`
 }
 
 export function confirmPhrase(text: string): "yes" | "no" | null {
@@ -111,8 +111,27 @@ export function confirmPhrase(text: string): "yes" | "no" | null {
     .replace(/[?!.,]/g, " ")
     .replace(/\s+/g, " ")
     .trim()
-  if (folded === "sim" || folded === "grava" || folded === "podes gravar" || folded === "confirma") return "yes"
-  if (folded === "nao" || folded === "deixa" || folded === "nao graves" || folded === "nao grava") return "no"
+  if (
+    folded === "sim" ||
+    folded === "grava" ||
+    folded === "salva" ||
+    folded === "podes gravar" ||
+    folded === "pode gravar" ||
+    folded === "pode salvar" ||
+    folded === "confirma"
+  ) {
+    return "yes"
+  }
+  if (
+    folded === "nao" ||
+    folded === "deixa" ||
+    folded === "nao graves" ||
+    folded === "nao grava" ||
+    folded === "nao salva" ||
+    folded === "nao salve"
+  ) {
+    return "no"
+  }
   return null
 }
 
@@ -160,17 +179,17 @@ export function summaryFor(event: ReplyEvent): string {
 
   if (event.type === "object.location") {
     if (name && event.place) return `${name} em ${event.place}`
-    return event.place ?? name ?? "Sítio"
+    return event.place ?? name ?? "Lugar"
   }
 
   if (event.type === "note") return event.text?.trim() || "Nota"
   if (event.type === "incident") return event.text?.trim() || "Incidente"
   if (event.type === "reminder") return event.title?.trim() || "Lembrete"
-  return "Registo"
+  return "Registro"
 }
 
 export function storedReply(): string {
-  return "Guardado, ainda por interpretar."
+  return "Salvo, ainda sem interpretar."
 }
 
 export function replyForSum(totalMinor: number, entityName?: string | null): string {

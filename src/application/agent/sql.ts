@@ -467,7 +467,7 @@ export async function requireCorrectable(
     if (!canRead(session.role, event.visibility, event.actorId, session.userId)) {
       throw new AgentError(404, "not_found", "Não encontrei.")
     }
-    throw new AgentError(403, "forbidden", "Não tens permissão.")
+    throw new AgentError(403, "forbidden", "Você não tem permissão.")
   }
   return event
 }
@@ -586,7 +586,7 @@ export async function voidFact(env: Env, session: Session, eventId: string): Pro
     if (!canRead(session.role, event.visibility, event.actorId, session.userId)) {
       return { ok: false, status: 404, message: "Não encontrei." }
     }
-    return { ok: false, status: 403, message: "Não tens permissão." }
+    return { ok: false, status: 403, message: "Você não tem permissão." }
   }
 
   await env.DB

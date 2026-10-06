@@ -56,12 +56,12 @@ type AuthEnv = { Bindings: Env }
 
 const SESSION_MISSING = "Sessão em falta."
 const UNAUTHORIZED = "Não autorizado."
-const FORBIDDEN = "Não tens permissão."
+const FORBIDDEN = "Você não tem permissão."
 const HOUSE_EXISTS = "A casa já existe."
 const INVALID = "Pedido inválido."
 const INVITE_INVALID = "Convite inválido."
 const NOT_FOUND = "Não encontrado."
-const UNAVAILABLE = "Falhou. Tenta outra vez."
+const UNAVAILABLE = "Falhou. Tente de novo."
 
 function fail(
   c: Context,
@@ -184,7 +184,7 @@ async function bootstrap<E extends AuthEnv>(c: Context<E>) {
       name: householdName,
       timezone: "Europe/Lisbon",
       currency: "EUR",
-      locale: "pt-PT",
+      locale: "pt-BR",
     },
   }
   try {

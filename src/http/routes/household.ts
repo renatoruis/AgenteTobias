@@ -13,8 +13,8 @@ type HouseholdEnv = AppEnv
 
 const INVALID = "Dados inválidos."
 const UNAUTHORIZED = "Sessão em falta."
-const FORBIDDEN = "Não podes fazer isto."
-const UNAVAILABLE = "Falhou. Tenta outra vez."
+const FORBIDDEN = "Você não pode fazer isso."
+const UNAVAILABLE = "Falhou. Tente de novo."
 const EXISTS = "Esse nome já existe."
 
 export function registerHousehold(app: Hono<HouseholdEnv>): void {

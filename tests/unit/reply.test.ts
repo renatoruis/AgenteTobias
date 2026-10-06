@@ -52,7 +52,7 @@ describe("replyFor", () => {
   })
 
   it("uses the stored reply when the model is down", () => {
-    expect(storedReply()).toBe("Guardado, ainda por interpretar.")
+    expect(storedReply()).toBe("Salvo, ainda sem interpretar.")
   })
 
   it("quotes a note with the civil day", () => {
@@ -74,7 +74,7 @@ describe("replyFor", () => {
 
   it("asks before saving", () => {
     expect(proposalFor({ type: "note", text: "primeiro dia", occurredOn: "2026-10-05" })).toBe(
-      "Entendi: «primeiro dia», 5 de outubro de 2026. Gravo?",
+      "Entendi: «primeiro dia», 5 de outubro de 2026. Salvo?",
     )
     expect(confirmPhrase("Sim!")).toBe("yes")
     expect(confirmPhrase("deixa")).toBe("no")

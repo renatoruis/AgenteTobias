@@ -56,7 +56,7 @@ async function dispatch(
   if (method === "tools/call") return callTool(env, session, params, now)
   if (method === "prompts/list") {
     return {
-      prompts: [{ name: PROMPT_NAME, description: "Instruções da memória da casa e o cartão actual." }],
+      prompts: [{ name: PROMPT_NAME, description: "Instruções da memória da casa e o cartão atual." }],
     }
   }
   if (method === "prompts/get") return prompt(env, session, params)
@@ -66,7 +66,7 @@ async function dispatch(
         {
           uri: CARD_URI,
           name: "Cartão da casa",
-          description: "Membros e entidades activas.",
+          description: "Membros e entidades ativas.",
           mimeType: "text/plain",
         },
       ],

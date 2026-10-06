@@ -18,7 +18,7 @@ const ITEMS: Array<{ id: Section; href: string; label: string; icon: string }> =
   {
     id: "ligacao",
     href: "/ligacao",
-    label: "Ligação",
+    label: "Conexão",
     icon: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.8 13.2a4.2 4.2 0 0 0 5.9.2l1.7-1.7a4.2 4.2 0 0 0-5.9-5.9l-1 1" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M14.2 10.8a4.2 4.2 0 0 0-5.9-.2l-1.7 1.7a4.2 4.2 0 0 0 5.9 5.9l1-1" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>`,
   },
 ]
@@ -46,7 +46,7 @@ export function documentPage(title: string, body: string, section: Section | nul
 </div>`
     : `<main class="gate">${body}</main>`
   return `<!doctype html>
-<html lang="pt-PT">
+<html lang="pt-BR">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex">

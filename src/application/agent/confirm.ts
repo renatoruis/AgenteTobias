@@ -51,7 +51,7 @@ export async function confirmMessage(
   }
 
   if (!accept) {
-    const response = decided(row.id, row.conversationId, "Não gravei.", [])
+    const response = decided(row.id, row.conversationId, "Não salvei.", [])
     await saveResult(env.DB, session.householdId, row.id, "interpreted", JSON.stringify(response))
     return response
   }

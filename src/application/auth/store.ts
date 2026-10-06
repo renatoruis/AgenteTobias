@@ -81,7 +81,7 @@ export async function createBootstrap(
     db
       .prepare(
         `INSERT INTO households (id, name, timezone, currency, locale, created_at)
-         VALUES (?, ?, 'Europe/Lisbon', 'EUR', 'pt-PT', ?)`,
+         VALUES (?, ?, 'Europe/Lisbon', 'EUR', 'pt-BR', ?)`,
       )
       .bind(input.householdId, input.householdName, input.now),
     db
